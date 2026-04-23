@@ -53,7 +53,7 @@ typedef struct
 
 typedef struct
 {
-    uint64_t *timestamp; // Timestamps from x-axis (nanoseconds).
+    uint64_t *timestamp; // Timestamps (nanoseconds).
     axis_t x;            // Stick x-axis.
     axis_t y;            // Stick y-axis.
     size_t num_samples;  // Samples collected.
