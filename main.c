@@ -33,7 +33,7 @@ typedef struct
 {
     int mean;
     int median;
-    float duplicate_percent; // For Switch IMU samples only.
+    float duplicate_percent;
 } stats_t;
 
 typedef struct
@@ -582,11 +582,13 @@ static void CalcSensorRate(double *delta_time, sensor_t *sensor)
     uint64_t last_timestamp = sensor->timestamp[0];
     float last_data[NUM_SENSOR_AXES];
     SDL_memcpy(last_data, sensor->data[0], sizeof(last_data));
+    size_t total_duplicate = 0;
 
     for (size_t i = 1; i < sensor->num_samples; i++)
     {
         if (ArrayEqual(sensor->data[i], last_data, NUM_SENSOR_AXES))
         {
+            total_duplicate++;
             continue;
         }
 
@@ -603,6 +605,8 @@ static void CalcSensorRate(double *delta_time, sensor_t *sensor)
     }
 
     CalcRateStats(delta_time, sum, count, &sensor->rate);
+    sensor->rate.duplicate_percent =
+        100.0f * total_duplicate / sensor->num_samples;
 }
 
 static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
@@ -804,7 +808,10 @@ static void ShowResults(appstate_t *as)
     {
         if (enabled[i])
         {
-            if (rates[i]->duplicate_percent > DUP_WARN_THRESHOLD)
+            // Switch controllers need special handling for IMU samples which
+            // makes median values misleading if there are too many duplicates.
+            if (as->gamepad.switch_controller
+                && rates[i]->duplicate_percent > DUP_WARN_THRESHOLD)
             {
                 SDL_Log("%-12s %7d Hz %10s", names[i], rates[i]->mean, "N/A");
             }
