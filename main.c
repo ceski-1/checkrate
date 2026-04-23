@@ -25,7 +25,8 @@
 #define NUM_SENSOR_AXES        3                              // Gyro or accel
 #define IMU_SAMPLES_PER_PACKET 3                              // Switch only
 #define IMU_SAMPLES_DUP_WINDOW (IMU_SAMPLES_PER_PACKET * 2)   // Switch only
-#define DUP_WARN_THRESHOLD     10.0f                          // percent
+#define DUP_SWITCH_THRESHOLD   10.0f                          // percent
+#define DUP_WARN_THRESHOLD     0.1f                           // percent
 #define DEFAULT_MEASURE_TIME   3                              // seconds
 #define MAX_MEASURE_TIME       60                             // seconds
 
@@ -811,7 +812,7 @@ static void ShowResults(appstate_t *as)
             // Switch controllers need special handling for IMU samples which
             // makes median values misleading if there are too many duplicates.
             if (as->gamepad.switch_controller
-                && rates[i]->duplicate_percent > DUP_WARN_THRESHOLD)
+                && rates[i]->duplicate_percent > DUP_SWITCH_THRESHOLD)
             {
                 SDL_Log("%-12s %7d Hz %10s", names[i], rates[i]->mean, "N/A");
             }
@@ -823,14 +824,26 @@ static void ShowResults(appstate_t *as)
         }
     }
 
-    if (as->gyro.rate.duplicate_percent > DUP_WARN_THRESHOLD
-        || as->accel.rate.duplicate_percent > DUP_WARN_THRESHOLD)
+    bool added_line_spacing = false;
+    const char *dup_names[] = {"IMU Gyro", "IMU Accel"};
+    float dup_percents[] = {as->gyro.rate.duplicate_percent,
+                            as->accel.rate.duplicate_percent};
+    for (size_t i = 0; i < SDL_arraysize(dup_percents); i++)
     {
-        const float value = SDL_max(as->gyro.rate.duplicate_percent,
-                                    as->accel.rate.duplicate_percent);
-        SDL_Log("");
-        SDL_Log("%sNote:%s %d%% of IMU samples were duplicates.", as->yellow,
-                as->end, SDL_lroundf(value));
+        if (dup_percents[i] > DUP_WARN_THRESHOLD)
+        {
+            if (!added_line_spacing)
+            {
+                SDL_Log("");
+                added_line_spacing = true;
+            }
+
+            // Round to nearest 0.1.
+            dup_percents[i] = SDL_lroundf(dup_percents[i] * 10.0f) / 10.0f;
+
+            SDL_Log("%sNote:%s %.1f%% of %s samples were duplicates.",
+                    as->yellow, as->end, dup_percents[i], dup_names[i]);
+        }
     }
 }
 
