@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#define COLOR_GRAY   "\033[0;90m"
 #define COLOR_RED    "\033[0;91m"
 #define COLOR_YELLOW "\033[0;93m"
 #define COLOR_BLUE   "\033[0;94m"
@@ -29,12 +30,28 @@
 #define DUP_WARN_THRESHOLD     0.1f                           // percent
 #define DEFAULT_MEASURE_TIME   3                              // seconds
 #define MAX_MEASURE_TIME       60                             // seconds
+#define MAX_RESULTS_PCT        999.9f                         // percent
+#define MAX_RESULTS_RATE       99999                          // Hz
+#define MAX_RESULTS_COUNT      999999                         // count
 
 typedef struct
 {
     int mean;
+    int sd;
+    int min;
+    int p1;
+    int p5;
+    int p25;
     int median;
-    float duplicate_percent;
+    int p75;
+    int p95;
+    int p99;
+    int max;
+    size_t count;
+    size_t num_samples;
+    size_t num_duplicate;
+    size_t num_invalid;
+    float dup_percent;
 } stats_t;
 
 typedef struct
@@ -94,6 +111,8 @@ typedef struct
     stick_t right;
     sensor_t gyro;
     sensor_t accel;
+    bool verbose;
+    const char *gray;
     const char *red;
     const char *yellow;
     const char *blue;
@@ -109,11 +128,12 @@ static void InitLog(appstate_t *as)
 #ifdef _WIN32
     if (as->hconsole == NULL)
     {
-        as->red = as->yellow = as->blue = as->end = "";
+        as->gray = as->red = as->yellow = as->blue = as->end = "";
     }
     else
 #endif
     {
+        as->gray = COLOR_GRAY;
         as->red = COLOR_RED;
         as->yellow = COLOR_YELLOW;
         as->blue = COLOR_BLUE;
@@ -214,6 +234,7 @@ static void PrintUsage(void)
     SDL_Log("Options:");
     SDL_Log("  -h, --help              Print usage information and exit.");
     SDL_Log("  -t, --time <seconds>    Number of seconds to measure input.");
+    SDL_Log("  -v, --verbose           Show detailed statistics.");
     SDL_Log("  --version               Print version number and exit.");
 }
 
@@ -238,6 +259,12 @@ static bool ReadArgs(int argc, char *argv[], appstate_t *as)
                 as->measure_time = SDL_clamp(seconds, 0, MAX_MEASURE_TIME);
                 count = 2;
             }
+        }
+        else if (SDL_strcmp(argv[i], "-v") == 0
+                 || SDL_strcmp(argv[i], "--verbose") == 0)
+        {
+            as->verbose = true;
+            count = 1;
         }
         else if (SDL_strcmp(argv[i], "--version") == 0)
         {
@@ -389,8 +416,15 @@ static void OpenGamepad(appstate_t *as, SDL_JoystickID id)
     }
     const uint16_t vid = SDL_GetGamepadVendor(as->gamepad.device);
     const uint16_t pid = SDL_GetGamepadProduct(as->gamepad.device);
-    SDL_Log("%sConnected:%s %s [VID: 0x%04x] [PID: 0x%04x]", as->blue, as->end,
-            as->gamepad.name, vid, pid);
+    if (as->verbose)
+    {
+        SDL_Log("%sConnected:%s %s [VID: 0x%04x] [PID: 0x%04x]", as->blue,
+                as->end, as->gamepad.name, vid, pid);
+    }
+    else
+    {
+        SDL_Log("%sConnected:%s %s", as->blue, as->end, as->gamepad.name);
+    }
 
     as->gamepad.switch_controller =
         IsSwitchController(as->gamepad.device, vid, pid);
@@ -517,6 +551,30 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     return SDL_APP_CONTINUE;
 }
 
+static void ClampForResultsTable(stats_t *rate)
+{
+    rate->mean = SDL_clamp(rate->mean, 0, MAX_RESULTS_RATE);
+    rate->sd = SDL_clamp(rate->sd, 0, MAX_RESULTS_RATE);
+    rate->min = SDL_clamp(rate->min, 0, MAX_RESULTS_RATE);
+    rate->p1 = SDL_clamp(rate->p1, 0, MAX_RESULTS_RATE);
+    rate->p5 = SDL_clamp(rate->p5, 0, MAX_RESULTS_RATE);
+    rate->p25 = SDL_clamp(rate->p25, 0, MAX_RESULTS_RATE);
+    rate->median = SDL_clamp(rate->median, 0, MAX_RESULTS_RATE);
+    rate->p75 = SDL_clamp(rate->p75, 0, MAX_RESULTS_RATE);
+    rate->p95 = SDL_clamp(rate->p95, 0, MAX_RESULTS_RATE);
+    rate->p99 = SDL_clamp(rate->p99, 0, MAX_RESULTS_RATE);
+    rate->max = SDL_clamp(rate->max, 0, MAX_RESULTS_RATE);
+
+    rate->count = SDL_min(rate->count, MAX_RESULTS_COUNT);
+    rate->num_samples = SDL_min(rate->num_samples, MAX_RESULTS_COUNT);
+    rate->num_duplicate = SDL_min(rate->num_duplicate, MAX_RESULTS_COUNT);
+    rate->num_invalid = SDL_min(rate->num_invalid, MAX_RESULTS_COUNT);
+
+    // Round to nearest 0.1.
+    rate->dup_percent = SDL_lroundf(rate->dup_percent * 10.0f) / 10.0f;
+    rate->dup_percent = SDL_clamp(rate->dup_percent, 0.0f, MAX_RESULTS_PCT);
+}
+
 static double CalcMedian(const double *data, size_t start_idx, size_t end_idx)
 {
     if (start_idx > end_idx)
@@ -527,7 +585,7 @@ static double CalcMedian(const double *data, size_t start_idx, size_t end_idx)
     const size_t num_samples = (end_idx + 1) - start_idx;
     const size_t median_index = start_idx + num_samples / 2;
 
-    if (median_index == 0 || num_samples % 2)
+    if (median_index == start_idx || num_samples % 2)
     {
         return data[median_index];
     }
@@ -537,6 +595,24 @@ static double CalcMedian(const double *data, size_t start_idx, size_t end_idx)
     }
 }
 
+static double CalcStandardDeviation(const double *data, double mean,
+                                    size_t count)
+{
+    double squared_deviations = 0.0;
+
+    for (size_t i = 0; i < count; i++)
+    {
+        const double deviation = data[i] - mean;
+        squared_deviations += (deviation * deviation);
+    }
+
+    const size_t num_samples_bessel = count - 1;
+    const double variance = squared_deviations / num_samples_bessel;
+    const double standard_deviation = SDL_sqrt(variance);
+
+    return standard_deviation;
+}
+
 static int SDLCALL SortDeltaTimes(const void *a, const void *b)
 {
     const double A = *(const double *)a;
@@ -544,21 +620,54 @@ static int SDLCALL SortDeltaTimes(const void *a, const void *b)
     return ((A < B) ? -1 : (A > B));
 }
 
-static void CalcRateStats(double *delta_time, double sum, size_t count,
-                          stats_t *rate)
+static void CalcRateStats(double *delta, size_t count, size_t num_samples,
+                          size_t num_duplicate, stats_t *rate)
 {
-    rate->mean = 0;
-    rate->median = 0;
-
-    if (sum > 0.0 && count > 0)
+    if (count > 1)
     {
-        rate->mean = SDL_lround(SDL_NS_PER_SECOND * count / sum);
-
-        SDL_qsort(delta_time, count, sizeof(*delta_time), SortDeltaTimes);
-        const double median = CalcMedian(delta_time, 0, count - 1);
-        if (median > 0.0)
+        double mean_dt = 0.0;
+        for (size_t i = 0; i < count; i++)
         {
-            rate->median = SDL_lround(SDL_NS_PER_SECOND / median);
+            mean_dt += delta[i] / count;
+
+            // Swap from nanoseconds to Hz for statistics.
+            delta[i] = SDL_NS_PER_SECOND / delta[i];
+        }
+
+        if (mean_dt > 0.0)
+        {
+            const double mean_hz = SDL_NS_PER_SECOND / mean_dt;
+            rate->mean = SDL_lround(mean_hz);
+            rate->sd = SDL_lround(CalcStandardDeviation(delta, mean_hz, count));
+
+            SDL_qsort(delta, count, sizeof(*delta), SortDeltaTimes);
+            rate->median = SDL_lround(CalcMedian(delta, 0, count - 1));
+            rate->min = SDL_lround(delta[0]);
+            rate->max = SDL_lround(delta[count - 1]);
+
+            // Calculate P25 and P75 like Q1 and Q3 for IQR.
+            const size_t p75_start_idx = count / 2;
+            const size_t p25_end_idx =
+                (count % 2) ? p75_start_idx : p75_start_idx - 1;
+            rate->p25 = SDL_lround(CalcMedian(delta, 0, p25_end_idx));
+            rate->p75 = SDL_lround(CalcMedian(delta, p75_start_idx, count - 1));
+
+            const size_t p1_idx = count * 1 / 100;
+            const size_t p5_idx = count * 5 / 100;
+            const size_t p95_idx = count * 95 / 100;
+            const size_t p99_idx = count * 99 / 100;
+            rate->p1 = SDL_lround(delta[p1_idx]);
+            rate->p5 = SDL_lround(delta[p5_idx]);
+            rate->p95 = SDL_lround(delta[p95_idx]);
+            rate->p99 = SDL_lround(delta[p99_idx]);
+
+            rate->count = count;
+            rate->num_samples = num_samples;
+            rate->num_duplicate = num_duplicate;
+            rate->num_invalid = num_samples - count - num_duplicate;
+            rate->dup_percent = 100.0f * num_duplicate / num_samples;
+
+            ClampForResultsTable(rate);
         }
     }
 }
@@ -578,18 +687,17 @@ static bool ArrayEqual(const float *a, const float *b, size_t num_values)
 
 static void CalcSensorRate(double *delta_time, sensor_t *sensor)
 {
-    double sum = 0.0;
     size_t count = 0;
+    size_t num_duplicate = 0;
     uint64_t last_timestamp = sensor->timestamp[0];
     float last_data[NUM_SENSOR_AXES];
     SDL_memcpy(last_data, sensor->data[0], sizeof(last_data));
-    size_t total_duplicate = 0;
 
     for (size_t i = 1; i < sensor->num_samples; i++)
     {
         if (ArrayEqual(sensor->data[i], last_data, NUM_SENSOR_AXES))
         {
-            total_duplicate++;
+            num_duplicate++;
             continue;
         }
 
@@ -597,7 +705,6 @@ static void CalcSensorRate(double *delta_time, sensor_t *sensor)
         if (interval >= MIN_INTERVAL && interval <= MAX_INTERVAL)
         {
             delta_time[count] = (double)interval;
-            sum += delta_time[count];
             count++;
         }
 
@@ -605,26 +712,22 @@ static void CalcSensorRate(double *delta_time, sensor_t *sensor)
         SDL_memcpy(last_data, sensor->data[i], sizeof(last_data));
     }
 
-    CalcRateStats(delta_time, sum, count, &sensor->rate);
-    sensor->rate.duplicate_percent =
-        100.0f * total_duplicate / sensor->num_samples;
+    CalcRateStats(delta_time, count, sensor->num_samples, num_duplicate,
+                  &sensor->rate);
 }
 
 static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
 {
     if (sensor->num_samples < IMU_SAMPLES_DUP_WINDOW)
     {
-        sensor->rate.mean = 0;
-        sensor->rate.median = 0;
         return;
     }
 
-    double sum = 0.0;
     size_t count = 0;
+    size_t num_duplicate = 0;
     uint64_t last_timestamp = sensor->timestamp[IMU_SAMPLES_PER_PACKET - 1];
     size_t num_tracked = 0;
-    size_t num_duplicate = 0;
-    size_t total_duplicate = 0;
+    size_t num_tracked_duplicate = 0;
 
     for (size_t i = IMU_SAMPLES_DUP_WINDOW - 1; i < sensor->num_samples;
          i += IMU_SAMPLES_PER_PACKET)
@@ -637,18 +740,18 @@ static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
                 if (ArrayEqual(sensor->data[i - j], sensor->data[i - k],
                                NUM_SENSOR_AXES))
                 {
-                    num_duplicate++;
+                    num_tracked_duplicate++;
                     break;
                 }
             }
         }
 
-        if (num_duplicate == num_tracked)
+        if (num_tracked_duplicate == num_tracked)
         {
             continue;
         }
 
-        const size_t num_found = num_tracked - num_duplicate;
+        const size_t num_found = num_tracked - num_tracked_duplicate;
         const double interval =
             (double)(sensor->timestamp[i] - last_timestamp) / num_found;
         if (interval >= MIN_INTERVAL && interval <= MAX_INTERVAL)
@@ -656,26 +759,24 @@ static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
             for (size_t j = 0; j < num_found; j++)
             {
                 delta_time[count] = interval;
-                sum += delta_time[count];
                 count++;
             }
         }
 
         last_timestamp = sensor->timestamp[i];
         num_tracked = 0;
-        total_duplicate += num_duplicate;
-        num_duplicate = 0;
+        num_duplicate += num_tracked_duplicate;
+        num_tracked_duplicate = 0;
     }
 
-    CalcRateStats(delta_time, sum, count, &sensor->rate);
-    sensor->rate.duplicate_percent =
-        100.0f * total_duplicate / sensor->num_samples;
+    CalcRateStats(delta_time, count, sensor->num_samples, num_duplicate,
+                  &sensor->rate);
 }
 
 static void CalcStickRate(double *delta_time, stick_t *stick)
 {
-    double sum = 0.0;
     size_t count = 0;
+    size_t num_duplicate = 0;
     uint64_t last_timestamp = stick->timestamp[0];
     int16_t last_stick_x = stick->x.value[0];
     int16_t last_stick_y = stick->y.value[0];
@@ -685,6 +786,7 @@ static void CalcStickRate(double *delta_time, stick_t *stick)
         if (stick->x.value[i] == last_stick_x
             && stick->y.value[i] == last_stick_y)
         {
+            num_duplicate++;
             continue;
         }
 
@@ -692,7 +794,6 @@ static void CalcStickRate(double *delta_time, stick_t *stick)
         if (interval >= MIN_INTERVAL && interval <= MAX_INTERVAL)
         {
             delta_time[count] = (double)interval;
-            sum += delta_time[count];
             count++;
         }
 
@@ -701,38 +802,32 @@ static void CalcStickRate(double *delta_time, stick_t *stick)
         last_stick_y = stick->y.value[i];
     }
 
-    CalcRateStats(delta_time, sum, count, &stick->rate);
+    CalcRateStats(delta_time, count, stick->num_samples, num_duplicate,
+                  &stick->rate);
 }
 
 static void CalcPollingRate(double *delta_time, const uint64_t *timestamp,
-                            size_t in_count, stats_t *poll)
+                            size_t num_samples, stats_t *poll)
 {
-    double sum = 0.0;
     size_t count = 0;
     uint64_t last_timestamp = timestamp[0];
 
-    for (size_t i = 1; i < in_count; i++)
+    for (size_t i = 1; i < num_samples; i++)
     {
-        if (timestamp[i] == last_timestamp)
-        {
-            continue;
-        }
-
         const uint64_t interval = timestamp[i] - last_timestamp;
         if (interval >= MIN_INTERVAL && interval <= MAX_INTERVAL)
         {
             delta_time[count] = (double)interval;
-            sum += delta_time[count];
             count++;
         }
 
         last_timestamp = timestamp[i];
     }
 
-    CalcRateStats(delta_time, sum, count, poll);
+    CalcRateStats(delta_time, count, num_samples, 0, poll);
 }
 
-static void ShowResults(appstate_t *as)
+static void CalcResults(appstate_t *as)
 {
     if (as->gyro.enabled)
     {
@@ -784,6 +879,11 @@ static void ShowResults(appstate_t *as)
             CalcSensorRate(as->delta_time, &as->accel);
         }
     }
+}
+
+static void ShowResults(appstate_t *as)
+{
+    CalcResults(as);
 
     const bool enabled[] = {
         true,
@@ -803,46 +903,41 @@ static void ShowResults(appstate_t *as)
         &as->poll,      &as->left.rate,  &as->right.rate,
         &as->gyro.rate, &as->accel.rate,
     };
+    const size_t num_rows = SDL_arraysize(rates);
 
-    SDL_Log("%23s %10s", "Average", "Median");
-    for (size_t i = 0; i < SDL_arraysize(rates); i++)
+    if (as->verbose)
     {
-        if (enabled[i])
+        SDL_Log("%-12s %s│%s %8s %s%8s │ %8s %8s%s %8s %s%8s %8s │ %7s %7s%s",
+                "", as->gray, as->end, "Average", as->gray, "SD", "P1", "P25",
+                as->end, "Median", as->gray, "P75", "P99", "Samples", "Valid",
+                as->end);
+        SDL_Log("%s─────────────┼───────────────────┼──────────────────────────"
+                "────────────────────┼────────────────%s",
+                as->gray, as->end);
+        for (size_t i = 0; i < num_rows; i++)
         {
-            // Switch controllers need special handling for IMU samples which
-            // makes median values misleading if there are too many duplicates.
-            if (as->gamepad.switch_controller
-                && rates[i]->duplicate_percent > DUP_SWITCH_THRESHOLD)
+            if (enabled[i])
             {
-                SDL_Log("%-12s %7d Hz %10s", names[i], rates[i]->mean, "N/A");
+                const stats_t *rate = rates[i];
+                SDL_Log("%-12s %s│%s %5d Hz %s%5d Hz │ %5d Hz %5d Hz%s %5d Hz "
+                        "%s%5d Hz %5d Hz │ %7d %7d%s",
+                        names[i], as->gray, as->end, rate->mean, as->gray,
+                        rate->sd, rate->p1, rate->p25, as->end, rate->median,
+                        as->gray, rate->p75, rate->p99, rate->num_samples,
+                        rate->count, as->end);
             }
-            else
+        }
+    }
+    else
+    {
+        SDL_Log("%23s %10s", "Average", "Median");
+        for (size_t i = 0; i < num_rows; i++)
+        {
+            if (enabled[i])
             {
                 SDL_Log("%-12s %7d Hz %7d Hz", names[i], rates[i]->mean,
                         rates[i]->median);
             }
-        }
-    }
-
-    bool added_line_spacing = false;
-    const char *dup_names[] = {"IMU Gyro", "IMU Accel"};
-    float dup_percents[] = {as->gyro.rate.duplicate_percent,
-                            as->accel.rate.duplicate_percent};
-    for (size_t i = 0; i < SDL_arraysize(dup_percents); i++)
-    {
-        if (dup_percents[i] > DUP_WARN_THRESHOLD)
-        {
-            if (!added_line_spacing)
-            {
-                SDL_Log("");
-                added_line_spacing = true;
-            }
-
-            // Round to nearest 0.1.
-            dup_percents[i] = SDL_lroundf(dup_percents[i] * 10.0f) / 10.0f;
-
-            SDL_Log("%sNote:%s %.1f%% of %s samples were duplicates.",
-                    as->yellow, as->end, dup_percents[i], dup_names[i]);
         }
     }
 }

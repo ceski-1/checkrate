@@ -12,11 +12,20 @@ Windows binaries are provided on the [Releases](https://github.com/ceski-1/check
 
 Run `checkrate` and follow the instructions.
 
-Optionally use `-t <seconds>` or `--time <seconds>` to adjust measurement time. Example:
+Optional command line arguments:
+
+| Argument | Description |
+| --- | --- |
+| `-t <seconds>` or `--time <seconds>` | Number of seconds to measure input |
+| `-v` or `--verbose` | Show detailed statistics |
+
+Example:
 
 ```
-checkrate -t 10
+checkrate -v -t 5
 ```
+
+![screenshot_verbose](screenshot_verbose.png)
 
 ## Compiling
 
