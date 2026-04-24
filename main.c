@@ -1,5 +1,5 @@
 #ifdef _WIN32
-  #include <windows.h> // GetConsoleProcessList
+  #include <windows.h>
 #endif
 #include "config.h"
 #define SDL_MAIN_USE_CALLBACKS
