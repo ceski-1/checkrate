@@ -56,7 +56,7 @@ typedef struct
     stats_set_t interval; // Sample interval (milliseconds).
     stats_set_t rate;     // Sample rate (Hz).
     size_t count;         // Valid sample count.
-    size_t num_samples;   // Total Sample count.
+    size_t num_samples;   // Total sample count.
     size_t num_duplicate;
     size_t num_invalid;
 } stats_t;
