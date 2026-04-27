@@ -164,6 +164,29 @@ static void EnableVtProcessing(appstate_t *as)
     }
     as->hconsole = NULL;
 }
+
+static void RaisePriority(bool raise_priority)
+{
+    PROCESS_POWER_THROTTLING_STATE state;
+    memset(&state, 0, sizeof(state));
+    state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+                        | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+    state.StateMask = raise_priority ? 0 : state.ControlMask;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state,
+                          sizeof(state));
+
+    if (raise_priority)
+    {
+        SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+    }
+    else
+    {
+        SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
+    }
+}
 #endif
 
 static void ResetAppState(appstate_t *as)
@@ -303,6 +326,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     }
 
 #ifdef _WIN32
+    RaisePriority(true);
     EnableVtProcessing(as);
 #endif
     InitLog(as);
@@ -1142,6 +1166,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     SDL_Quit();
 
 #ifdef _WIN32
+    RaisePriority(false);
     // Pause if this is the only process attached to the console.
     DWORD process_list[1];
     DWORD process_count = 1;
