@@ -26,8 +26,6 @@
 #define NUM_SENSOR_AXES        3                              // Gyro or accel
 #define IMU_SAMPLES_PER_PACKET 3                              // Switch only
 #define IMU_SAMPLES_DUP_WINDOW (IMU_SAMPLES_PER_PACKET * 2)   // Switch only
-#define DUP_SWITCH_THRESHOLD   10.0f                          // percent
-#define DUP_WARN_THRESHOLD     0.1f                           // percent
 #define DEFAULT_MEASURE_TIME   3                              // seconds
 #define MAX_MEASURE_TIME       60                             // seconds
 #define MAX_RESULTS_INTERVAL   99.999                         // milliseconds
