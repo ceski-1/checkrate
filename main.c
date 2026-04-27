@@ -30,28 +30,35 @@
 #define DUP_WARN_THRESHOLD     0.1f                           // percent
 #define DEFAULT_MEASURE_TIME   3                              // seconds
 #define MAX_MEASURE_TIME       60                             // seconds
-#define MAX_RESULTS_PCT        999.9f                         // percent
-#define MAX_RESULTS_RATE       99999                          // Hz
+#define MAX_RESULTS_INTERVAL   99.999                         // milliseconds
+#define MAX_RESULTS_RATE       999999                         // Hz
 #define MAX_RESULTS_COUNT      999999                         // count
+#define MS_PER_NS              1.0e-6
+#define MS_PER_S               1000.0
 
 typedef struct
 {
-    int mean;
-    int sd;
-    int min;
-    int p1;
-    int p5;
-    int p25;
-    int median;
-    int p75;
-    int p95;
-    int p99;
-    int max;
-    size_t count;
-    size_t num_samples;
+    double mean;
+    double sd;
+    double min;
+    double p1;
+    double p5;
+    double p25;
+    double p50;
+    double p75;
+    double p95;
+    double p99;
+    double max;
+} stats_set_t;
+
+typedef struct
+{
+    stats_set_t interval; // Sample interval (milliseconds).
+    stats_set_t rate;     // Sample rate (Hz).
+    size_t count;         // Valid sample count.
+    size_t num_samples;   // Total Sample count.
     size_t num_duplicate;
     size_t num_invalid;
-    float dup_percent;
 } stats_t;
 
 typedef struct
@@ -59,7 +66,7 @@ typedef struct
     uint64_t *timestamp;            // Timestamps (nanoseconds).
     float (*data)[NUM_SENSOR_AXES]; // Gyro or accel data.
     size_t num_samples;             // Samples collected.
-    stats_t rate;                   // Estimated update rate (Hz).
+    stats_t stats;                  // Descriptive statistics.
     bool enabled;                   // Supported by this controller?
 } sensor_t;
 
@@ -75,7 +82,7 @@ typedef struct
     axis_t x;            // Stick x-axis.
     axis_t y;            // Stick y-axis.
     size_t num_samples;  // Samples collected.
-    stats_t rate;        // Estimated update rate (Hz).
+    stats_t stats;       // Descriptive statistics.
     bool enabled;        // Supported by this controller?
 } stick_t;
 
@@ -180,7 +187,7 @@ static void ResetAppState(appstate_t *as)
         AS_ZEROP(sticks[i]->x.value);
         AS_ZEROP(sticks[i]->y.value);
         sticks[i]->num_samples = 0;
-        SDL_zero(sticks[i]->rate);
+        SDL_zero(sticks[i]->stats);
         sticks[i]->enabled = false;
     }
 
@@ -190,7 +197,7 @@ static void ResetAppState(appstate_t *as)
         AS_ZEROP(sensors[i]->timestamp);
         AS_ZEROP(sensors[i]->data);
         sensors[i]->num_samples = 0;
-        SDL_zero(sensors[i]->rate);
+        SDL_zero(sensors[i]->stats);
         sensors[i]->enabled = false;
     }
 #undef AS_ZEROP
@@ -551,48 +558,29 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     return SDL_APP_CONTINUE;
 }
 
-static void ClampForResultsTable(stats_t *rate)
+static void ClampSet(stats_set_t *set, double max_value)
 {
-    rate->mean = SDL_clamp(rate->mean, 0, MAX_RESULTS_RATE);
-    rate->sd = SDL_clamp(rate->sd, 0, MAX_RESULTS_RATE);
-    rate->min = SDL_clamp(rate->min, 0, MAX_RESULTS_RATE);
-    rate->p1 = SDL_clamp(rate->p1, 0, MAX_RESULTS_RATE);
-    rate->p5 = SDL_clamp(rate->p5, 0, MAX_RESULTS_RATE);
-    rate->p25 = SDL_clamp(rate->p25, 0, MAX_RESULTS_RATE);
-    rate->median = SDL_clamp(rate->median, 0, MAX_RESULTS_RATE);
-    rate->p75 = SDL_clamp(rate->p75, 0, MAX_RESULTS_RATE);
-    rate->p95 = SDL_clamp(rate->p95, 0, MAX_RESULTS_RATE);
-    rate->p99 = SDL_clamp(rate->p99, 0, MAX_RESULTS_RATE);
-    rate->max = SDL_clamp(rate->max, 0, MAX_RESULTS_RATE);
-
-    rate->count = SDL_min(rate->count, MAX_RESULTS_COUNT);
-    rate->num_samples = SDL_min(rate->num_samples, MAX_RESULTS_COUNT);
-    rate->num_duplicate = SDL_min(rate->num_duplicate, MAX_RESULTS_COUNT);
-    rate->num_invalid = SDL_min(rate->num_invalid, MAX_RESULTS_COUNT);
-
-    // Round to nearest 0.1.
-    rate->dup_percent = SDL_lroundf(rate->dup_percent * 10.0f) / 10.0f;
-    rate->dup_percent = SDL_clamp(rate->dup_percent, 0.0f, MAX_RESULTS_PCT);
+    set->mean = SDL_clamp(set->mean, 0.0, max_value);
+    set->sd = SDL_clamp(set->sd, 0.0, max_value);
+    set->min = SDL_clamp(set->min, 0.0, max_value);
+    set->p1 = SDL_clamp(set->p1, 0.0, max_value);
+    set->p5 = SDL_clamp(set->p5, 0.0, max_value);
+    set->p25 = SDL_clamp(set->p25, 0.0, max_value);
+    set->p50 = SDL_clamp(set->p50, 0.0, max_value);
+    set->p75 = SDL_clamp(set->p75, 0.0, max_value);
+    set->p95 = SDL_clamp(set->p95, 0.0, max_value);
+    set->p99 = SDL_clamp(set->p99, 0.0, max_value);
+    set->max = SDL_clamp(set->max, 0.0, max_value);
 }
 
-static double CalcMedian(const double *data, size_t start_idx, size_t end_idx)
+static void ClampForResultsTable(stats_t *stats)
 {
-    if (start_idx > end_idx)
-    {
-        return 0.0;
-    }
-
-    const size_t num_samples = (end_idx + 1) - start_idx;
-    const size_t median_index = start_idx + num_samples / 2;
-
-    if (median_index == start_idx || num_samples % 2)
-    {
-        return data[median_index];
-    }
-    else
-    {
-        return ((data[median_index - 1] + data[median_index]) * 0.5);
-    }
+    ClampSet(&stats->interval, MAX_RESULTS_INTERVAL);
+    ClampSet(&stats->rate, MAX_RESULTS_RATE);
+    stats->count = SDL_min(stats->count, MAX_RESULTS_COUNT);
+    stats->num_samples = SDL_min(stats->num_samples, MAX_RESULTS_COUNT);
+    stats->num_duplicate = SDL_min(stats->num_duplicate, MAX_RESULTS_COUNT);
+    stats->num_invalid = SDL_min(stats->num_invalid, MAX_RESULTS_COUNT);
 }
 
 static double CalcStandardDeviation(const double *data, double mean,
@@ -613,6 +601,36 @@ static double CalcStandardDeviation(const double *data, double mean,
     return standard_deviation;
 }
 
+// CDF method for calculating percentiles. 50th percentile is median.
+// Langford, E. (2006). Quartiles in Elementary Statistics. Journal of
+// Statistics Education, 14(3). https://doi.org/10.1080/10691898.2006.11910589
+static double CalcPercentile(const double *data, size_t count,
+                             size_t percentile)
+{
+    if (percentile == 0)
+    {
+        return data[0];
+    }
+    else if (percentile >= 100)
+    {
+        return data[count - 1];
+    }
+
+    const double np = count * percentile / 100.0;
+    const size_t remainder = (count * percentile) % 100;
+
+    if (remainder == 0)
+    {
+        const size_t index = SDL_lround(np) - 1;
+        return ((data[index] + data[index + 1]) * 0.5);
+    }
+    else
+    {
+        const size_t index = SDL_lround(SDL_ceil(np)) - 1;
+        return data[index];
+    }
+}
+
 static int SDLCALL SortDeltaTimes(const void *a, const void *b)
 {
     const double A = *(const double *)a;
@@ -620,56 +638,61 @@ static int SDLCALL SortDeltaTimes(const void *a, const void *b)
     return ((A < B) ? -1 : (A > B));
 }
 
-static void CalcRateStats(double *delta, size_t count, size_t num_samples,
-                          size_t num_duplicate, stats_t *rate)
+static void CalcStats(double *data, size_t count, size_t num_samples,
+                      size_t num_duplicate, stats_t *stats)
 {
-    if (count > 1)
+    if (count < 2)
     {
-        double mean_dt = 0.0;
-        for (size_t i = 0; i < count; i++)
-        {
-            mean_dt += delta[i] / count;
-
-            // Swap from nanoseconds to Hz for statistics.
-            delta[i] = SDL_NS_PER_SECOND / delta[i];
-        }
-
-        if (mean_dt > 0.0)
-        {
-            const double mean_hz = SDL_NS_PER_SECOND / mean_dt;
-            rate->mean = SDL_lround(mean_hz);
-            rate->sd = SDL_lround(CalcStandardDeviation(delta, mean_hz, count));
-
-            SDL_qsort(delta, count, sizeof(*delta), SortDeltaTimes);
-            rate->median = SDL_lround(CalcMedian(delta, 0, count - 1));
-            rate->min = SDL_lround(delta[0]);
-            rate->max = SDL_lround(delta[count - 1]);
-
-            // Calculate P25 and P75 like Q1 and Q3 for IQR.
-            const size_t p75_start_idx = count / 2;
-            const size_t p25_end_idx =
-                (count % 2) ? p75_start_idx : p75_start_idx - 1;
-            rate->p25 = SDL_lround(CalcMedian(delta, 0, p25_end_idx));
-            rate->p75 = SDL_lround(CalcMedian(delta, p75_start_idx, count - 1));
-
-            const size_t p1_idx = count * 1 / 100;
-            const size_t p5_idx = count * 5 / 100;
-            const size_t p95_idx = count * 95 / 100;
-            const size_t p99_idx = count * 99 / 100;
-            rate->p1 = SDL_lround(delta[p1_idx]);
-            rate->p5 = SDL_lround(delta[p5_idx]);
-            rate->p95 = SDL_lround(delta[p95_idx]);
-            rate->p99 = SDL_lround(delta[p99_idx]);
-
-            rate->count = count;
-            rate->num_samples = num_samples;
-            rate->num_duplicate = num_duplicate;
-            rate->num_invalid = num_samples - count - num_duplicate;
-            rate->dup_percent = 100.0f * num_duplicate / num_samples;
-
-            ClampForResultsTable(rate);
-        }
+        return;
     }
+
+    // Sample interval.
+    double sum = 0.0;
+    for (size_t i = 0; i < count; i++)
+    {
+        data[i] *= MS_PER_NS;
+        sum += data[i];
+    }
+    stats_set_t *dt = &stats->interval;
+    dt->mean = sum / count;
+    dt->sd = CalcStandardDeviation(data, dt->mean, count);
+    SDL_qsort(data, count, sizeof(*data), SortDeltaTimes);
+    dt->min = data[0];
+    dt->p1 = CalcPercentile(data, count, 1);
+    dt->p5 = CalcPercentile(data, count, 5);
+    dt->p25 = CalcPercentile(data, count, 25);
+    dt->p50 = CalcPercentile(data, count, 50);
+    dt->p75 = CalcPercentile(data, count, 75);
+    dt->p95 = CalcPercentile(data, count, 95);
+    dt->p99 = CalcPercentile(data, count, 99);
+    dt->max = data[count - 1];
+
+    // Sample rate.
+    stats_set_t *hz = &stats->rate;
+    hz->mean = MS_PER_S / dt->mean;
+    hz->sd = 0.0; // Don't use inverse of standard deviation.
+    for (size_t i = 0; i < count; i++)
+    {
+        data[i] = MS_PER_S / data[i];
+    }
+    SDL_qsort(data, count, sizeof(*data), SortDeltaTimes);
+    hz->min = data[0];
+    hz->p1 = CalcPercentile(data, count, 1);
+    hz->p5 = CalcPercentile(data, count, 5);
+    hz->p25 = CalcPercentile(data, count, 25);
+    hz->p50 = CalcPercentile(data, count, 50);
+    hz->p75 = CalcPercentile(data, count, 75);
+    hz->p95 = CalcPercentile(data, count, 95);
+    hz->p99 = CalcPercentile(data, count, 99);
+    hz->max = data[count - 1];
+
+    // Sample counts.
+    stats->count = count;
+    stats->num_samples = num_samples;
+    stats->num_duplicate = num_duplicate;
+    stats->num_invalid = num_samples - count - num_duplicate;
+
+    ClampForResultsTable(stats);
 }
 
 static bool ArrayEqual(const float *a, const float *b, size_t num_values)
@@ -712,8 +735,8 @@ static void CalcSensorRate(double *delta_time, sensor_t *sensor)
         SDL_memcpy(last_data, sensor->data[i], sizeof(last_data));
     }
 
-    CalcRateStats(delta_time, count, sensor->num_samples, num_duplicate,
-                  &sensor->rate);
+    CalcStats(delta_time, count, sensor->num_samples, num_duplicate,
+              &sensor->stats);
 }
 
 static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
@@ -769,8 +792,8 @@ static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
         num_tracked_duplicate = 0;
     }
 
-    CalcRateStats(delta_time, count, sensor->num_samples, num_duplicate,
-                  &sensor->rate);
+    CalcStats(delta_time, count, sensor->num_samples, num_duplicate,
+              &sensor->stats);
 }
 
 static void CalcStickRate(double *delta_time, stick_t *stick)
@@ -802,12 +825,12 @@ static void CalcStickRate(double *delta_time, stick_t *stick)
         last_stick_y = stick->y.value[i];
     }
 
-    CalcRateStats(delta_time, count, stick->num_samples, num_duplicate,
-                  &stick->rate);
+    CalcStats(delta_time, count, stick->num_samples, num_duplicate,
+              &stick->stats);
 }
 
 static void CalcPollingRate(double *delta_time, const uint64_t *timestamp,
-                            size_t num_samples, stats_t *poll)
+                            size_t num_samples, stats_t *stats)
 {
     size_t count = 0;
     uint64_t last_timestamp = timestamp[0];
@@ -824,7 +847,7 @@ static void CalcPollingRate(double *delta_time, const uint64_t *timestamp,
         last_timestamp = timestamp[i];
     }
 
-    CalcRateStats(delta_time, count, num_samples, 0, poll);
+    CalcStats(delta_time, count, num_samples, 0, stats);
 }
 
 static void CalcResults(appstate_t *as)
@@ -893,40 +916,74 @@ static void ShowResults(appstate_t *as)
         as->accel.enabled,
     };
     const char *names[] = {
-        "Polling Rate",
+        "Polling",
         as->left.enabled && as->right.enabled ? "Left Stick" : "Stick",
         as->left.enabled && as->right.enabled ? "Right Stick" : "Stick",
         "IMU Gyro",
         "IMU Accel",
     };
-    const stats_t *rates[] = {
-        &as->poll,      &as->left.rate,  &as->right.rate,
-        &as->gyro.rate, &as->accel.rate,
+    const stats_t *all_stats[] = {
+        &as->poll,       &as->left.stats,  &as->right.stats,
+        &as->gyro.stats, &as->accel.stats,
     };
-    const size_t num_rows = SDL_arraysize(rates);
+    const size_t num_rows = SDL_arraysize(all_stats);
 
     if (as->verbose)
     {
-        SDL_Log("%-12s %s│%s %8s %s%8s │ %8s %8s%s %8s %s%8s %8s │ %7s %7s%s",
-                "", as->gray, as->end, "Average", as->gray, "SD", "P1", "P25",
-                as->end, "Median", as->gray, "P75", "P99", "Samples", "Valid",
-                as->end);
-        SDL_Log("%s─────────────┼───────────────────┼──────────────────────────"
-                "────────────────────┼────────────────%s",
+        SDL_Log("");
+        SDL_Log("%s────────────────────────────────────────────────────────────"
+                "─────────────────%s",
+                as->gray, as->end);
+        SDL_Log("%s%-13s%s %6s %s%6s %6s %6s%s %6s %s%6s %6s %6s %6s%s",
+                as->blue, "Interval [ms]", as->end, "Mean", as->gray, "SD",
+                "P1", "P25", as->end, "P50", as->gray, "P75", "P99", "N",
+                "Total", as->end);
+        SDL_Log("%s────────────────────────────────────────────────────────────"
+                "─────────────────%s",
                 as->gray, as->end);
         for (size_t i = 0; i < num_rows; i++)
         {
+            const stats_t *stats = all_stats[i];
+            const stats_set_t *set = &stats->interval;
             if (enabled[i])
             {
-                const stats_t *rate = rates[i];
-                SDL_Log("%-12s %s│%s %5d Hz %s%5d Hz │ %5d Hz %5d Hz%s %5d Hz "
-                        "%s%5d Hz %5d Hz │ %7d %7d%s",
-                        names[i], as->gray, as->end, rate->mean, as->gray,
-                        rate->sd, rate->p1, rate->p25, as->end, rate->median,
-                        as->gray, rate->p75, rate->p99, rate->num_samples,
-                        rate->count, as->end);
+                SDL_Log("%-13s %6.3f %s%6.3f %6.3f %6.3f%s %6.3f %s%6.3f %6.3f "
+                        "%6d %6d%s",
+                        names[i], set->mean, as->gray, set->sd, set->p1,
+                        set->p25, as->end, set->p50, as->gray, set->p75,
+                        set->p99, stats->count, stats->num_samples, as->end);
             }
         }
+        SDL_Log("%s────────────────────────────────────────────────────────────"
+                "─────────────────%s",
+                as->gray, as->end);
+        SDL_Log("");
+        SDL_Log("%s────────────────────────────────────────────────────────────"
+                "─────────────────%s",
+                as->gray, as->end);
+        SDL_Log("%s%-13s%s %6s %s%6s %6s %6s%s %6s %s%6s %6s %6s %6s%s",
+                as->blue, "Rate [Hz]", as->end, "Mean", as->gray, "", "P1",
+                "P25", as->end, "P50", as->gray, "P75", "P99", "N", "Total",
+                as->end);
+        SDL_Log("%s────────────────────────────────────────────────────────────"
+                "─────────────────%s",
+                as->gray, as->end);
+        for (size_t i = 0; i < num_rows; i++)
+        {
+            const stats_t *stats = all_stats[i];
+            const stats_set_t *set = &stats->rate;
+            if (enabled[i])
+            {
+                SDL_Log("%-13s %6.0f %s%6s %6.0f %6.0f%s %6.0f %s%6.0f %6.0f "
+                        "%6d %6d%s",
+                        names[i], set->mean, as->gray, "", set->p1, set->p25,
+                        as->end, set->p50, as->gray, set->p75, set->p99,
+                        stats->count, stats->num_samples, as->end);
+            }
+        }
+        SDL_Log("%s────────────────────────────────────────────────────────────"
+                "─────────────────%s",
+                as->gray, as->end);
     }
     else
     {
@@ -935,8 +992,8 @@ static void ShowResults(appstate_t *as)
         {
             if (enabled[i])
             {
-                SDL_Log("%-12s %7d Hz %7d Hz", names[i], rates[i]->mean,
-                        rates[i]->median);
+                SDL_Log("%-12s %7.0f Hz %7.0f Hz", names[i],
+                        all_stats[i]->rate.mean, all_stats[i]->rate.p50);
             }
         }
     }
