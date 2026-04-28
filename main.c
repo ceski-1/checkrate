@@ -33,7 +33,8 @@
 #define MAX_RESULTS_COUNT      999999                         // count
 #define MS_PER_NS              1.0e-6
 #define MS_PER_S               1000.0
-#define BUF_LEN                1024
+#define CSV_BUF_LEN            500000
+#define CSV_BUF_LEN_SAFE       50000
 
 typedef struct
 {
@@ -1196,20 +1197,13 @@ static void WriteOutputFile(appstate_t *as)
         return;
     }
 
-    as->buf = SDL_calloc(1, BUF_LEN);
+    as->buf = SDL_calloc(1, CSV_BUF_LEN);
     if (!as->buf)
     {
         SDL_CloseIO(as->io);
         SDL_Log("%sError: Memory allocation failure.%s", as->red, as->end);
         return;
     }
-
-    const char header[] = "ControllerName,"
-                          "LeftStickTime,LeftStickX,LeftStickY,"
-                          "RightStickTime,RightStickX,RightStickY,"
-                          "GyroPacketIndex,GyroTime,GyroPitch,GyroYaw,GyroRoll,"
-                          "AccelPacketIndex,AccelTime,AccelX,AccelY,AccelZ\n";
-    SDL_WriteIO(as->io, header, sizeof(header) - 1);
 
     const size_t num_samples[] = {
         as->left.num_samples,
@@ -1235,49 +1229,77 @@ static void WriteOutputFile(appstate_t *as)
 
     const stick_t *sticks[] = {&as->left, &as->right};
     const sensor_t *sensors[] = {&as->gyro, &as->accel};
-    size_t num_bytes;
+
+    // Print header.
+    size_t num_bytes =
+        SDL_snprintf(as->buf, CSV_BUF_LEN,
+                     "ControllerName,"
+                     "LeftStickTime,LeftStickX,LeftStickY,"
+                     "RightStickTime,RightStickX,RightStickY,"
+                     "GyroPacketIndex,GyroTime,GyroPitch,GyroYaw,GyroRoll,"
+                     "AccelPacketIndex,AccelTime,AccelX,AccelY,AccelZ\n");
+
+    // Print controller name once (leave remaining rows blank).
+    num_bytes += SDL_snprintf(&as->buf[num_bytes], CSV_BUF_LEN - num_bytes,
+                              "%s", as->gamepad.name);
+
     for (size_t i = 0; i < num_rows; i++)
     {
-        num_bytes = SDL_snprintf(as->buf, BUF_LEN, "%s", as->gamepad.name);
-        SDL_WriteIO(as->io, as->buf, num_bytes);
-
+        // Print left and right analog sticks.
         for (size_t j = 0; j < SDL_arraysize(sticks); j++)
         {
             const stick_t *stick = sticks[j];
             if (i < stick->num_samples)
             {
-                num_bytes =
-                    SDL_snprintf(as->buf, BUF_LEN, ",%" SDL_PRIu64 ",%d,%d",
+                num_bytes +=
+                    SDL_snprintf(&as->buf[num_bytes], CSV_BUF_LEN - num_bytes,
+                                 ",%" SDL_PRIu64 ",%d,%d",
                                  stick->timestamp[i] - stick->timestamp[0],
                                  stick->x.value[i], stick->y.value[i]);
-                SDL_WriteIO(as->io, as->buf, num_bytes);
             }
             else
             {
-                SDL_WriteIO(as->io, ",,,", 3);
+                num_bytes += SDL_snprintf(&as->buf[num_bytes],
+                                          CSV_BUF_LEN - num_bytes, ",,,");
             }
         }
 
+        // Print gyro and accel.
         for (size_t j = 0; j < SDL_arraysize(sensors); j++)
         {
             const sensor_t *sensor = sensors[j];
             if (i < sensor->num_samples)
             {
-                num_bytes = SDL_snprintf(
-                    as->buf, BUF_LEN,
+                num_bytes += SDL_snprintf(
+                    &as->buf[num_bytes], CSV_BUF_LEN - num_bytes,
                     ",%" SDL_PRIu64 ",%" SDL_PRIu64 ",%f,%f,%f",
                     sensor->packet_index[i],
                     sensor->timestamp[i] - sensor->timestamp[0],
                     sensor->data[i][0], sensor->data[i][1], sensor->data[i][2]);
-                SDL_WriteIO(as->io, as->buf, num_bytes);
             }
             else
             {
-                SDL_WriteIO(as->io, ",,,,,", 5);
+                num_bytes += SDL_snprintf(&as->buf[num_bytes],
+                                          CSV_BUF_LEN - num_bytes, ",,,,,");
             }
         }
 
-        SDL_WriteIO(as->io, "\n", 1);
+        // Print new line.
+        num_bytes +=
+            SDL_snprintf(&as->buf[num_bytes], CSV_BUF_LEN - num_bytes, "\n");
+
+        // Write to file when buffer is full.
+        if (CSV_BUF_LEN - num_bytes < CSV_BUF_LEN_SAFE)
+        {
+            SDL_WriteIO(as->io, as->buf, num_bytes);
+            num_bytes = 0;
+        }
+    }
+
+    // Write out remaining buffer.
+    if (num_bytes != 0)
+    {
+        SDL_WriteIO(as->io, as->buf, num_bytes);
     }
 
     SDL_CloseIO(as->io);
