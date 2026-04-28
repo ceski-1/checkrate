@@ -33,6 +33,7 @@
 #define MAX_RESULTS_COUNT      999999                         // count
 #define MS_PER_NS              1.0e-6
 #define MS_PER_S               1000.0
+#define BUF_LEN                1024
 
 typedef struct
 {
@@ -61,6 +62,7 @@ typedef struct
 
 typedef struct
 {
+    size_t *packet_index;           // Switch controllers use triplets.
     uint64_t *timestamp;            // Timestamps (nanoseconds).
     float (*data)[NUM_SENSOR_AXES]; // Gyro or accel data.
     size_t num_samples;             // Samples collected.
@@ -116,6 +118,10 @@ typedef struct
     stick_t right;
     sensor_t gyro;
     sensor_t accel;
+    bool write_data;
+    const char *file;
+    SDL_IOStream *io;
+    char *buf;
     bool verbose;
     const char *gray;
     const char *red;
@@ -215,6 +221,7 @@ static void ResetAppState(appstate_t *as)
     sensor_t *sensors[] = {&as->gyro, &as->accel};
     for (size_t i = 0; i < SDL_arraysize(sensors); i++)
     {
+        AS_ZEROP(sensors[i]->packet_index);
         AS_ZEROP(sensors[i]->timestamp);
         AS_ZEROP(sensors[i]->data);
         sensors[i]->num_samples = 0;
@@ -248,6 +255,7 @@ static bool AllocAppState(appstate_t *as)
     sensor_t *sensors[] = {&as->gyro, &as->accel};
     for (size_t i = 0; i < SDL_arraysize(sensors); i++)
     {
+        AS_MALLOC(sensors[i]->packet_index);
         AS_MALLOC(sensors[i]->timestamp);
         AS_MALLOC(sensors[i]->data);
     }
@@ -261,6 +269,7 @@ static void PrintUsage(void)
     SDL_Log("Usage: %s [options]", PROJECT_NAME);
     SDL_Log("Options:");
     SDL_Log("  -h, --help              Print usage information and exit.");
+    SDL_Log("  -o, --output <file>     Write raw data to a CSV file.");
     SDL_Log("  -t, --time <seconds>    Number of seconds to measure input.");
     SDL_Log("  -v, --verbose           Show detailed statistics.");
     SDL_Log("  --version               Print version number and exit.");
@@ -278,10 +287,20 @@ static bool ReadArgs(int argc, char *argv[], appstate_t *as)
             PrintUsage();
             return false;
         }
+        else if (SDL_strcmp(argv[i], "-o") == 0
+                 || SDL_strcmp(argv[i], "--output") == 0)
+        {
+            if (argv[i + 1] && argv[i + 1][0] != '-')
+            {
+                as->write_data = true;
+                as->file = argv[i + 1];
+                count = 2;
+            }
+        }
         else if (SDL_strcmp(argv[i], "-t") == 0
                  || SDL_strcmp(argv[i], "--time") == 0)
         {
-            if (argv[i + 1])
+            if (argv[i + 1] && argv[i + 1][0] != '-')
             {
                 const int seconds = SDL_atoi(argv[i + 1]);
                 as->measure_time = SDL_clamp(seconds, 0, MAX_MEASURE_TIME);
@@ -737,9 +756,12 @@ static void CalcSensorRate(double *delta_time, sensor_t *sensor)
     uint64_t last_timestamp = sensor->timestamp[0];
     float last_data[NUM_SENSOR_AXES];
     SDL_memcpy(last_data, sensor->data[0], sizeof(last_data));
+    sensor->packet_index[0] = 0;
 
     for (size_t i = 1; i < sensor->num_samples; i++)
     {
+        sensor->packet_index[i] = i;
+
         if (ArrayEqual(sensor->data[i], last_data, NUM_SENSOR_AXES))
         {
             num_duplicate++;
@@ -773,10 +795,19 @@ static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
     uint64_t last_timestamp = sensor->timestamp[IMU_SAMPLES_PER_PACKET - 1];
     size_t num_tracked = 0;
     size_t num_tracked_duplicate = 0;
+    size_t packet_index = 0;
+    sensor->packet_index[0] = packet_index;
+    sensor->packet_index[1] = packet_index;
+    sensor->packet_index[2] = packet_index;
 
     for (size_t i = IMU_SAMPLES_DUP_WINDOW - 1; i < sensor->num_samples;
          i += IMU_SAMPLES_PER_PACKET)
     {
+        packet_index++;
+        sensor->packet_index[i - 2] = packet_index;
+        sensor->packet_index[i - 1] = packet_index;
+        sensor->packet_index[i - 0] = packet_index;
+
         for (size_t j = 0; j < IMU_SAMPLES_PER_PACKET; j++)
         {
             num_tracked++;
@@ -1136,12 +1167,121 @@ static void FreeAppState(appstate_t *as)
         sensor_t *sensors[] = {&as->gyro, &as->accel};
         for (size_t i = 0; i < SDL_arraysize(sensors); i++)
         {
+            SDL_free(sensors[i]->packet_index);
             SDL_free(sensors[i]->timestamp);
             SDL_free(sensors[i]->data);
         }
 
         SDL_free(as);
     }
+}
+
+static void WriteOutputFile(appstate_t *as)
+{
+    if (!as->write_data)
+    {
+        return;
+    }
+
+    if (as->file == NULL)
+    {
+        SDL_Log("%sError: Invalid output file.%s", as->red, as->end);
+        return;
+    }
+
+    as->io = SDL_IOFromFile(as->file, "w");
+    if (as->io == NULL)
+    {
+        SDL_Log("%sError: %s%s", as->red, SDL_GetError(), as->end);
+        return;
+    }
+
+    as->buf = SDL_calloc(1, BUF_LEN);
+    if (!as->buf)
+    {
+        SDL_CloseIO(as->io);
+        SDL_Log("%sError: Memory allocation failure.%s", as->red, as->end);
+        return;
+    }
+
+    const char header[] = "ControllerName,"
+                          "LeftStickTime,LeftStickX,LeftStickY,"
+                          "RightStickTime,RightStickX,RightStickY,"
+                          "GyroPacketIndex,GyroTime,GyroPitch,GyroYaw,GyroRoll,"
+                          "AccelPacketIndex,AccelTime,AccelX,AccelY,AccelZ\n";
+    SDL_WriteIO(as->io, header, sizeof(header) - 1);
+
+    const size_t num_samples[] = {
+        as->left.num_samples,
+        as->right.num_samples,
+        as->gyro.num_samples,
+        as->accel.num_samples,
+    };
+    size_t num_rows = 0;
+    for (size_t i = 0; i < SDL_arraysize(num_samples); i++)
+    {
+        if (num_rows < num_samples[i])
+        {
+            num_rows = num_samples[i];
+        }
+    }
+
+    if (num_rows == 0)
+    {
+        SDL_CloseIO(as->io);
+        SDL_free(as->buf);
+        return;
+    }
+
+    const stick_t *sticks[] = {&as->left, &as->right};
+    const sensor_t *sensors[] = {&as->gyro, &as->accel};
+    size_t num_bytes;
+    for (size_t i = 0; i < num_rows; i++)
+    {
+        num_bytes = SDL_snprintf(as->buf, BUF_LEN, "%s", as->gamepad.name);
+        SDL_WriteIO(as->io, as->buf, num_bytes);
+
+        for (size_t j = 0; j < SDL_arraysize(sticks); j++)
+        {
+            const stick_t *stick = sticks[j];
+            if (i < stick->num_samples)
+            {
+                num_bytes =
+                    SDL_snprintf(as->buf, BUF_LEN, ",%" SDL_PRIu64 ",%d,%d",
+                                 stick->timestamp[i] - stick->timestamp[0],
+                                 stick->x.value[i], stick->y.value[i]);
+                SDL_WriteIO(as->io, as->buf, num_bytes);
+            }
+            else
+            {
+                SDL_WriteIO(as->io, ",,,", 3);
+            }
+        }
+
+        for (size_t j = 0; j < SDL_arraysize(sensors); j++)
+        {
+            const sensor_t *sensor = sensors[j];
+            if (i < sensor->num_samples)
+            {
+                num_bytes = SDL_snprintf(
+                    as->buf, BUF_LEN,
+                    ",%" SDL_PRIu64 ",%" SDL_PRIu64 ",%f,%f,%f",
+                    sensor->packet_index[i],
+                    sensor->timestamp[i] - sensor->timestamp[0],
+                    sensor->data[i][0], sensor->data[i][1], sensor->data[i][2]);
+                SDL_WriteIO(as->io, as->buf, num_bytes);
+            }
+            else
+            {
+                SDL_WriteIO(as->io, ",,,,,", 5);
+            }
+        }
+
+        SDL_WriteIO(as->io, "\n", 1);
+    }
+
+    SDL_CloseIO(as->io);
+    SDL_free(as->buf);
 }
 
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
@@ -1159,6 +1299,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     if (as && as->gamepad.device)
     {
         SDL_CloseGamepad(as->gamepad.device);
+        WriteOutputFile(as);
     }
 
     FreeAppState(as);

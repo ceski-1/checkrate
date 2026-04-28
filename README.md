@@ -16,16 +16,47 @@ Optional command line arguments:
 
 | Argument | Description |
 | --- | --- |
+| `-o <file>` or `--output <file>` | Write raw data to a CSV file |
 | `-t <seconds>` or `--time <seconds>` | Number of seconds to measure input |
 | `-v` or `--verbose` | Show detailed statistics |
 
-Example:
+Example 1 - Write raw data to a CSV file:
 
 ```
-checkrate -v -t 5
+checkrate --output raw_data.csv
+```
+
+Example 2 - Measure input for 5 seconds and show detailed statistics:
+
+```
+checkrate --verbose --time 5
 ```
 
 ![screenshot_verbose](screenshot_verbose.png)
+
+## CSV File Output
+
+Comma-separated value (CSV) files can be generated using the `--output <file>` command line argument. These files contain raw data captured during measurement. The data is organized in columns, with each row containing data for a given timestamp.
+
+| Column Header | Description |
+| --- | --- |
+| *ControllerName* | Controller name string (e.g. DualSense Wireless Controller). |
+| *LeftStickTime* | Left stick timestamp (nanoseconds). |
+| *LeftStickX* | Left stick x-axis value (-32768 to 32767). |
+| *LeftStickY* | Left stick y-axis value (-32768 to 32767). |
+| *RightStickTime* | Right stick timestamp (nanoseconds). |
+| *RightStickX* | Right stick x-axis value (-32768 to 32767). |
+| *RightStickY* | Right stick y-axis value (-32768 to 32767). |
+| *GyroPacketIndex* | Zero-based index corresponding to the packet that the current gyroscope sample belongs to. Note that Switch controllers send gyroscope samples as triplets (3 samples per packet). |
+| *GyroTime* | Gyroscope timestamp (nanoseconds). |
+| *GyroPitch* | Gyroscope pitch rate (rad/s). |
+| *GyroYaw* | Gyroscope yaw rate (rad/s). |
+| *GyroRoll* | Gyroscope roll rate (rad/s). |
+| *AccelPacketIndex* | Zero-based index corresponding to the packet that the current accelerometer sample belongs to. Note that Switch controllers send accelerometer samples as triplets (3 samples per packet). |
+| *AccelTime* | Accelerometer timestamp (nanoseconds). |
+| *AccelX* | Accelerometer x-axis (m/s<sup>2</sup>). |
+| *AccelY* | Accelerometer y-axis (m/s<sup>2</sup>). |
+| *AccelZ* | Accelerometer z-axis (m/s<sup>2</sup>). |
 
 ## Compiling
 
