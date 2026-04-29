@@ -6,7 +6,7 @@ A tool for measuring controller polling rate.
 
 ## Download
 
-Windows binaries are provided on the [Releases](https://github.com/ceski-1/checkrate/releases/latest) page. Linux binaries are not provided; see [Compiling](#compiling).
+Windows and Linux binaries are provided on the [Releases](https://github.com/ceski-1/checkrate/releases/latest) page. To build from source, see [Compiling](#compiling).
 
 ## Usage
 
