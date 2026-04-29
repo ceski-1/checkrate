@@ -1,0 +1,2 @@
+- Added Linux AppImage to releases
+- Reduced number of writes for CSV files
