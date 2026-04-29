@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=checkrate
+Exec=checkrate %F
+TryExec=checkrate
+Type=Application
+Icon=checkrate
+Categories=Utility

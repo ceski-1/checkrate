@@ -2,7 +2,7 @@
 
 A tool for measuring controller polling rate.
 
-![screenshot](screenshot.png)
+![screenshot](res/screenshot.png)
 
 ## Download
 
@@ -32,7 +32,7 @@ Example 2 - Measure input for 5 seconds and show detailed statistics:
 checkrate --verbose --time 5
 ```
 
-![screenshot_verbose](screenshot_verbose.png)
+![screenshot_verbose](res/screenshot_verbose.png)
 
 ## CSV File Output
 
