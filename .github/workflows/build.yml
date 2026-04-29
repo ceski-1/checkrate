@@ -50,6 +50,12 @@ jobs:
         with:
           arch: x64
 
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install build-essential autoconf autoconf-archive automake libltdl-dev libtool libudev-dev ninja-build
+
       - name: Checkout
         uses: actions/checkout@v6
 
