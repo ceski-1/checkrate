@@ -984,7 +984,7 @@ static void ShowResults(appstate_t *as)
 
     if (as->verbose)
     {
-        SDL_Log("");
+        SDL_Log(" ");
         SDL_Log("%s────────────────────────────────────────────────────────────"
                 "──────────────────%s",
                 as->gray, as->end);
@@ -1005,13 +1005,14 @@ static void ShowResults(appstate_t *as)
                         "%6.3f %6d %6d%s",
                         names[i], set->mean, as->gray, set->sd, set->p1,
                         set->p25, as->end, set->p50, as->gray, set->p75,
-                        set->p99, stats->count, stats->num_samples, as->end);
+                        set->p99, (int)stats->count, (int)stats->num_samples,
+                        as->end);
             }
         }
         SDL_Log("%s────────────────────────────────────────────────────────────"
                 "──────────────────%s",
                 as->gray, as->end);
-        SDL_Log("");
+        SDL_Log(" ");
         SDL_Log("%s────────────────────────────────────────────────────────────"
                 "──────────────────%s",
                 as->gray, as->end);
@@ -1032,7 +1033,7 @@ static void ShowResults(appstate_t *as)
                         "%6d %6d%s",
                         names[i], set->mean, as->gray, "", set->p1, set->p25,
                         as->end, set->p50, as->gray, set->p75, set->p99,
-                        stats->count, stats->num_samples, as->end);
+                        (int)stats->count, (int)stats->num_samples, as->end);
             }
         }
         SDL_Log("%s────────────────────────────────────────────────────────────"
@@ -1116,7 +1117,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 }
                 SDL_Log("Rotate stick%s for %d seconds.",
                         as->left.enabled && as->right.enabled ? "s" : "",
-                        as->measure_time);
+                        (int)as->measure_time);
                 as->state = STATE_WAIT;
                 // Fall through.
 
@@ -1124,7 +1125,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 if (MovedStick(as))
                 {
                     as->measure_elapsed = 0;
-                    SDL_Log("%d...", as->measure_time);
+                    SDL_Log("%d...", (int)as->measure_time);
                     as->state = STATE_MEASURE;
                 }
                 break;
@@ -1133,7 +1134,8 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 as->measure_elapsed++;
                 if (as->measure_elapsed < as->measure_time)
                 {
-                    SDL_Log("%d...", as->measure_time - as->measure_elapsed);
+                    SDL_Log("%d...",
+                            (int)(as->measure_time - as->measure_elapsed));
                     break;
                 }
                 ShowResults(as);
@@ -1335,10 +1337,10 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     DWORD process_count = 1;
     if (GetConsoleProcessList(process_list, process_count) == 1)
     {
-        SDL_Log("");
+        SDL_Log(" ");
         system("pause");
     }
 #else
-    SDL_Log("");
+    SDL_Log(" ");
 #endif
 }
