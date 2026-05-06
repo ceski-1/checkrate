@@ -1,0 +1,13 @@
+diff --git a/src/joystick/hidapi/SDL_hidapi_steam_triton.c b/src/joystick/hidapi/SDL_hidapi_steam_triton.c
+index 79bcc3288..b02c4b1b7 100644
+--- a/src/joystick/hidapi/SDL_hidapi_steam_triton.c
++++ b/src/joystick/hidapi/SDL_hidapi_steam_triton.c
+@@ -203,7 +203,7 @@ static void HIDAPI_DriverSteamTriton_HandleState(SDL_HIDAPI_Device *device,
+     SDL_SendJoystickAxis(timestamp, joystick, SDL_GAMEPAD_AXIS_RIGHTY,
+                          -pTritonReport->sRightStickY);
+ 
+-    if (ctx->report_sensors && pTritonReport->imu.uTimestamp != ctx->last_sensor_tick) {
++    if (ctx->report_sensors) {
+         Uint32 delta_us = (pTritonReport->imu.uTimestamp - ctx->last_sensor_tick);
+ 
+         ctx->sensor_timestamp_ns += SDL_US_TO_NS(delta_us);
