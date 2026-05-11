@@ -46,7 +46,7 @@ jobs:
     steps:
       - name: Configure Developer Command Prompt (Windows)
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@9903b5ddb96b67d8ff27924e76011983224cfee5
+        uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
           arch: x64
 
