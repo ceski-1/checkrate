@@ -26,6 +26,9 @@
 #define NUM_SENSOR_AXES        3                              // Gyro or accel
 #define IMU_SAMPLES_PER_PACKET 3                              // Switch only
 #define IMU_SAMPLES_DUP_WINDOW (IMU_SAMPLES_PER_PACKET * 2)   // Switch only
+#define MAX_TOUCHPADS          2
+#define FIRST_FINGER           0
+#define SWIPE_TIME             (SDL_NS_PER_SECOND / 2)
 #define DEFAULT_MEASURE_TIME   3                              // seconds
 #define MAX_MEASURE_TIME       60                             // seconds
 #define MAX_RESULTS_INTERVAL   99.999                         // milliseconds
@@ -35,6 +38,8 @@
 #define MS_PER_S               1000.0
 #define CSV_BUF_LEN            500000
 #define CSV_BUF_LEN_SAFE       50000
+
+#define EQF(a, b) (SDL_fabsf((a) - (b)) < 1.0e-6f)
 
 typedef struct
 {
@@ -60,6 +65,22 @@ typedef struct
     size_t num_duplicate;
     size_t num_invalid;
 } stats_t;
+
+typedef struct
+{
+    uint64_t *timestamp; // Timestamps (nanoseconds).
+    bool *down;          // Finger touching?
+    float *x;            // Finger position on touchpad (0 to 1, 0 is left).
+    float *y;            // Finger position on touchpad (0 to 1, 0 is top).
+    float *pressure;     // Finger pressure on touchpad (0 to 1).
+    size_t num_samples;  // Samples collected.
+    int index;           // SDL touchpad index.
+    stats_t stats;       // Descriptive statistics.
+    bool enabled;        // Supported by this controller?
+    uint64_t start_time; // Timestamp when swiping motion started.
+    float last_x;        // For triggering measurement.
+    float last_y;        // For triggering measurement.
+} touchpad_t;
 
 typedef struct
 {
@@ -119,6 +140,8 @@ typedef struct
     stick_t right;
     sensor_t gyro;
     sensor_t accel;
+    touchpad_t left_touch;  // Only the first finger is tracked.
+    touchpad_t right_touch; // Only the first finger is tracked.
     bool write_data;
     const char *file;
     SDL_IOStream *io;
@@ -229,6 +252,23 @@ static void ResetAppState(appstate_t *as)
         SDL_zero(sensors[i]->stats);
         sensors[i]->enabled = false;
     }
+
+    touchpad_t *touchpads[] = {&as->left_touch, &as->right_touch};
+    for (size_t i = 0; i < SDL_arraysize(touchpads); i++)
+    {
+        AS_ZEROP(touchpads[i]->timestamp);
+        AS_ZEROP(touchpads[i]->down);
+        AS_ZEROP(touchpads[i]->x);
+        AS_ZEROP(touchpads[i]->y);
+        AS_ZEROP(touchpads[i]->pressure);
+        touchpads[i]->num_samples = 0;
+        touchpads[i]->index = 0;
+        SDL_zero(touchpads[i]->stats);
+        touchpads[i]->enabled = false;
+        touchpads[i]->start_time = 0;
+        touchpads[i]->last_x = -1.0f;
+        touchpads[i]->last_y = -1.0f;
+    }
 #undef AS_ZEROP
 }
 
@@ -259,6 +299,16 @@ static bool AllocAppState(appstate_t *as)
         AS_MALLOC(sensors[i]->packet_index);
         AS_MALLOC(sensors[i]->timestamp);
         AS_MALLOC(sensors[i]->data);
+    }
+
+    touchpad_t *touchpads[] = {&as->left_touch, &as->right_touch};
+    for (size_t i = 0; i < SDL_arraysize(touchpads); i++)
+    {
+        AS_MALLOC(touchpads[i]->timestamp);
+        AS_MALLOC(touchpads[i]->down);
+        AS_MALLOC(touchpads[i]->x);
+        AS_MALLOC(touchpads[i]->y);
+        AS_MALLOC(touchpads[i]->pressure);
     }
 
     return true;
@@ -404,6 +454,29 @@ static void CloseGamepad(appstate_t *as, SDL_JoystickID id)
     }
 }
 
+static void ConfigureTouchpads(appstate_t *as)
+{
+    as->left_touch.enabled = false;
+    as->right_touch.enabled = false;
+
+    int num_touchpads = SDL_GetNumGamepadTouchpads(as->gamepad.device);
+    num_touchpads = SDL_min(num_touchpads, MAX_TOUCHPADS);
+    if (num_touchpads < 1)
+    {
+        return;
+    }
+
+    touchpad_t *touchpads[] = {&as->left_touch, &as->right_touch};
+    for (int i = 0; i < num_touchpads; i++)
+    {
+        if (SDL_GetNumGamepadTouchpadFingers(as->gamepad.device, i) > 0)
+        {
+            touchpads[i]->index = i;
+            touchpads[i]->enabled = true;
+        }
+    }
+}
+
 static bool IsSwitch2Controller(uint16_t vid, uint16_t pid)
 {
     if (vid == VID_NINTENDO)
@@ -494,6 +567,8 @@ static void OpenGamepad(appstate_t *as, SDL_JoystickID id)
         SDL_GamepadHasSensor(as->gamepad.device, SDL_SENSOR_ACCEL)
         && SDL_SetGamepadSensorEnabled(as->gamepad.device, SDL_SENSOR_ACCEL,
                                        true);
+
+    ConfigureTouchpads(as);
 }
 
 static void OpenNextGamepad(appstate_t *as)
@@ -519,6 +594,27 @@ static void UpdateSensorData(const appstate_t *as, const SDL_Event *event,
                sizeof(sensor->data[sensor->num_samples]));
 
     sensor->num_samples++;
+}
+
+static void UpdateTouchpadData(appstate_t *as, const SDL_Event *event,
+                               touchpad_t *touch)
+{
+    if (!touch->enabled)
+    {
+        return;
+    }
+
+    if (touch->num_samples == as->max_samples)
+    {
+        return;
+    }
+
+    const size_t i = touch->num_samples;
+    touch->timestamp[i] = event->gdevice.timestamp;
+    SDL_GetGamepadTouchpadFinger(as->gamepad.device, touch->index, FIRST_FINGER,
+                                 &touch->down[i], &touch->x[i], &touch->y[i],
+                                 &touch->pressure[i]);
+    touch->num_samples++;
 }
 
 static void UpdateStickData(appstate_t *as, const SDL_Event *event,
@@ -549,6 +645,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
             {
                 UpdateStickData(as, event, &as->left);
                 UpdateStickData(as, event, &as->right);
+                UpdateTouchpadData(as, event, &as->left_touch);
+                UpdateTouchpadData(as, event, &as->right_touch);
             }
             break;
 
@@ -742,7 +840,7 @@ static bool ArrayEqual(const float *a, const float *b, size_t num_values)
     size_t num_equal = 0;
     for (size_t i = 0; i < num_values; i++)
     {
-        if (SDL_fabsf(a[i] - b[i]) < 1.0e-6f)
+        if (EQF(a[i], b[i]))
         {
             num_equal++;
         }
@@ -850,6 +948,44 @@ static void CalcSensorRateSwitch(double *delta_time, sensor_t *sensor)
               &sensor->stats);
 }
 
+static void CalcTouchRate(double *delta_time, touchpad_t *touch)
+{
+    size_t count = 0;
+    size_t num_duplicate = 0;
+    uint64_t last_timestamp = touch->timestamp[0];
+    bool last_down = touch->down[0];
+    float last_touch_x = touch->x[0];
+    float last_touch_y = touch->y[0];
+    float last_pressure = touch->pressure[0];
+
+    for (size_t i = 1; i < touch->num_samples; i++)
+    {
+        if (touch->down[i] == last_down && EQF(touch->x[i], last_touch_x)
+            && EQF(touch->y[i], last_touch_y)
+            && EQF(touch->pressure[i], last_pressure))
+        {
+            num_duplicate++;
+            continue;
+        }
+
+        const uint64_t interval = touch->timestamp[i] - last_timestamp;
+        if (interval >= MIN_INTERVAL && interval <= MAX_INTERVAL)
+        {
+            delta_time[count] = (double)interval;
+            count++;
+        }
+
+        last_timestamp = touch->timestamp[i];
+        last_down = touch->down[i];
+        last_touch_x = touch->x[i];
+        last_touch_y = touch->y[i];
+        last_pressure = touch->pressure[i];
+    }
+
+    CalcStats(delta_time, count, touch->num_samples, num_duplicate,
+              &touch->stats);
+}
+
 static void CalcStickRate(double *delta_time, stick_t *stick)
 {
     size_t count = 0;
@@ -906,20 +1042,30 @@ static void CalcPollingRate(double *delta_time, const uint64_t *timestamp,
 
 static void CalcResults(appstate_t *as)
 {
-    if (as->gyro.enabled)
+    if (as->gyro.enabled && as->gyro.num_samples > 1)
     {
         CalcPollingRate(as->delta_time, as->gyro.timestamp,
                         as->gyro.num_samples, &as->poll);
     }
-    else if (as->left.enabled)
+    else if (as->left.enabled && as->left.num_samples > 1)
     {
         CalcPollingRate(as->delta_time, as->left.timestamp,
                         as->left.num_samples, &as->poll);
     }
-    else
+    else if (as->right.enabled && as->right.num_samples > 1)
     {
         CalcPollingRate(as->delta_time, as->right.timestamp,
                         as->right.num_samples, &as->poll);
+    }
+    else if (as->left_touch.enabled && as->left_touch.num_samples > 1)
+    {
+        CalcPollingRate(as->delta_time, as->left_touch.timestamp,
+                        as->left_touch.num_samples, &as->poll);
+    }
+    else if (as->right_touch.enabled && as->right_touch.num_samples > 1)
+    {
+        CalcPollingRate(as->delta_time, as->right_touch.timestamp,
+                        as->right_touch.num_samples, &as->poll);
     }
 
     if (as->left.enabled)
@@ -956,6 +1102,23 @@ static void CalcResults(appstate_t *as)
             CalcSensorRate(as->delta_time, &as->accel);
         }
     }
+
+    if (as->left_touch.enabled)
+    {
+        CalcTouchRate(as->delta_time, &as->left_touch);
+    }
+
+    if (as->right_touch.enabled)
+    {
+        CalcTouchRate(as->delta_time, &as->right_touch);
+    }
+}
+
+static void DrawHorizontalRule(appstate_t *as)
+{
+    SDL_Log("%s────────────────────────────────────────────────────────────────"
+            "──────────────%s",
+            as->gray, as->end);
 }
 
 static void ShowResults(appstate_t *as)
@@ -968,6 +1131,8 @@ static void ShowResults(appstate_t *as)
         as->right.enabled,
         as->gyro.enabled,
         as->accel.enabled,
+        as->left_touch.enabled,
+        as->right_touch.enabled,
     };
     const char *names[] = {
         as->verbose ? "Polling" : "Polling Rate",
@@ -975,26 +1140,31 @@ static void ShowResults(appstate_t *as)
         as->left.enabled && as->right.enabled ? "Right Stick" : "Stick",
         "IMU Gyro",
         "IMU Accel",
+        as->left_touch.enabled && as->right_touch.enabled ? "L. Touchpad"
+                                                          : "Touchpad",
+        as->left_touch.enabled && as->right_touch.enabled ? "R. Touchpad"
+                                                          : "Touchpad",
     };
     const stats_t *all_stats[] = {
-        &as->poll,       &as->left.stats,  &as->right.stats,
-        &as->gyro.stats, &as->accel.stats,
+        &as->poll,
+        &as->left.stats,
+        &as->right.stats,
+        &as->gyro.stats,
+        &as->accel.stats,
+        &as->left_touch.stats,
+        &as->right_touch.stats,
     };
     const size_t num_rows = SDL_arraysize(all_stats);
 
     if (as->verbose)
     {
         SDL_Log(" ");
-        SDL_Log("%s────────────────────────────────────────────────────────────"
-                "──────────────────%s",
-                as->gray, as->end);
+        DrawHorizontalRule(as);
         SDL_Log(" %s%-13s%s %6s %s%6s %6s %6s%s %6s %s%6s %6s %6s %6s%s",
                 as->blue, "Interval [ms]", as->end, "Mean", as->gray, "SD",
                 "P1", "P25", as->end, "P50", as->gray, "P75", "P99", "N",
                 "Total", as->end);
-        SDL_Log("%s────────────────────────────────────────────────────────────"
-                "──────────────────%s",
-                as->gray, as->end);
+        DrawHorizontalRule(as);
         for (size_t i = 0; i < num_rows; i++)
         {
             const stats_t *stats = all_stats[i];
@@ -1009,20 +1179,14 @@ static void ShowResults(appstate_t *as)
                         as->end);
             }
         }
-        SDL_Log("%s────────────────────────────────────────────────────────────"
-                "──────────────────%s",
-                as->gray, as->end);
+        DrawHorizontalRule(as);
         SDL_Log(" ");
-        SDL_Log("%s────────────────────────────────────────────────────────────"
-                "──────────────────%s",
-                as->gray, as->end);
+        DrawHorizontalRule(as);
         SDL_Log(" %s%-13s%s %6s %s%6s %6s %6s%s %6s %s%6s %6s %6s %6s%s",
                 as->blue, "Rate [Hz]", as->end, "Mean", as->gray, "", "P1",
                 "P25", as->end, "P50", as->gray, "P75", "P99", "N", "Total",
                 as->end);
-        SDL_Log("%s────────────────────────────────────────────────────────────"
-                "──────────────────%s",
-                as->gray, as->end);
+        DrawHorizontalRule(as);
         for (size_t i = 0; i < num_rows; i++)
         {
             const stats_t *stats = all_stats[i];
@@ -1036,9 +1200,7 @@ static void ShowResults(appstate_t *as)
                         (int)stats->count, (int)stats->num_samples, as->end);
             }
         }
-        SDL_Log("%s────────────────────────────────────────────────────────────"
-                "──────────────────%s",
-                as->gray, as->end);
+        DrawHorizontalRule(as);
     }
     else
     {
@@ -1054,6 +1216,50 @@ static void ShowResults(appstate_t *as)
     }
 }
 
+static bool SwipedTouchpad(appstate_t *as, uint64_t now)
+{
+    touchpad_t *touchpads[] = {&as->left_touch, &as->right_touch};
+    for (size_t i = 0; i < SDL_arraysize(touchpads); i++)
+    {
+        touchpad_t *touch = touchpads[i];
+        if (!touch->enabled)
+        {
+            continue;
+        }
+
+        bool down = false;
+        float x = 0.0f;
+        float y = 0.0f;
+        float pressure = 0.0f;
+
+        SDL_GetGamepadTouchpadFinger(as->gamepad.device, touch->index,
+                                     FIRST_FINGER, &down, &x, &y, &pressure);
+
+        if (down && pressure > 0.0f
+            && !(EQF(x, touch->last_x) && EQF(y, touch->last_y)))
+        {
+            if (touch->start_time == 0)
+            {
+                touch->start_time = now;
+            }
+            else if (now - touch->start_time >= SWIPE_TIME)
+            {
+                return true;
+            }
+            touch->last_x = x;
+            touch->last_y = y;
+        }
+        else
+        {
+            touch->start_time = 0;
+            touch->last_x = -1.0f;
+            touch->last_y = -1.0f;
+        }
+    }
+
+    return false;
+}
+
 static float ScaleAxis(int16_t value)
 {
     return ((float)value / (value > 0 ? SDL_MAX_SINT16 : -SDL_MIN_SINT16));
@@ -1064,6 +1270,10 @@ static bool MovedStick(appstate_t *as)
     const stick_t *sticks[] = {&as->left, &as->right};
     for (size_t i = 0; i < SDL_arraysize(sticks); i++)
     {
+        if (!sticks[i]->enabled)
+        {
+            continue;
+        }
         const float x = ScaleAxis(
             SDL_GetGamepadAxis(as->gamepad.device, sticks[i]->x.axis_type));
         const float y = ScaleAxis(
@@ -1075,6 +1285,41 @@ static bool MovedStick(appstate_t *as)
         }
     }
     return false;
+}
+
+static bool ShowInputPrompt(appstate_t *as)
+{
+    const int sticks =
+        ((as->left.enabled ? 1 : 0) + (as->right.enabled ? 1 : 0));
+    const int touchpads =
+        ((as->left_touch.enabled ? 1 : 0) + (as->right_touch.enabled ? 1 : 0));
+
+    if (sticks == 0 && touchpads == 0)
+    {
+        SDL_Log("%sError: No analog sticks or touchpads found.%s", as->red,
+                as->end);
+        CloseGamepad(as, as->gamepad.id);
+        return false;
+    }
+    else if (sticks > 0 && touchpads == 0)
+    {
+        SDL_Log("Rotate stick%s for %d seconds.", sticks > 1 ? "s" : "",
+                (int)as->measure_time);
+    }
+    else if (sticks == 0 && touchpads > 0)
+    {
+        SDL_Log("Swipe touchpad%s in circular motions for %d seconds.",
+                touchpads > 1 ? "s" : "", (int)as->measure_time);
+    }
+    else
+    {
+        SDL_Log("Rotate stick%s or swipe touchpad%s in circular motions for "
+                "%d seconds.",
+                sticks > 1 ? "s" : "", touchpads > 1 ? "s" : "",
+                (int)as->measure_time);
+    }
+
+    return true;
 }
 
 SDL_AppResult SDL_AppIterate(void *appstate)
@@ -1094,7 +1339,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         switch (as->state)
         {
             case STATE_START:
-                as->interval = SDL_NS_PER_SECOND;
+                as->interval = SDL_NS_PER_SECOND / 10;
                 as->state = STATE_CONNECT;
                 if (!as->gamepad.device)
                 {
@@ -1104,26 +1349,17 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 // Fall through.
 
             case STATE_CONNECT:
-                if (!as->gamepad.device)
+                if (!as->gamepad.device || !ShowInputPrompt(as))
                 {
                     break;
                 }
-                else if (!as->left.enabled && !as->right.enabled)
-                {
-                    SDL_Log("%sError: No analog sticks found.%s", as->red,
-                            as->end);
-                    CloseGamepad(as, as->gamepad.id);
-                    break;
-                }
-                SDL_Log("Rotate stick%s for %d seconds.",
-                        as->left.enabled && as->right.enabled ? "s" : "",
-                        (int)as->measure_time);
                 as->state = STATE_WAIT;
                 // Fall through.
 
             case STATE_WAIT:
-                if (MovedStick(as))
+                if (MovedStick(as) || SwipedTouchpad(as, now))
                 {
+                    as->interval = SDL_NS_PER_SECOND;
                     as->measure_elapsed = 0;
                     SDL_Log("%d...", (int)as->measure_time);
                     as->state = STATE_MEASURE;
@@ -1173,6 +1409,16 @@ static void FreeAppState(appstate_t *as)
             SDL_free(sensors[i]->packet_index);
             SDL_free(sensors[i]->timestamp);
             SDL_free(sensors[i]->data);
+        }
+
+        touchpad_t *touchpads[] = {&as->left_touch, &as->right_touch};
+        for (size_t i = 0; i < SDL_arraysize(touchpads); i++)
+        {
+            SDL_free(touchpads[i]->timestamp);
+            SDL_free(touchpads[i]->down);
+            SDL_free(touchpads[i]->x);
+            SDL_free(touchpads[i]->y);
+            SDL_free(touchpads[i]->pressure);
         }
 
         SDL_free(as);
@@ -1231,6 +1477,7 @@ static void WriteOutputFile(appstate_t *as)
 
     const stick_t *sticks[] = {&as->left, &as->right};
     const sensor_t *sensors[] = {&as->gyro, &as->accel};
+    const touchpad_t *touchpads[] = {&as->left_touch, &as->right_touch};
 
     // Print header.
     size_t num_bytes =
@@ -1239,7 +1486,11 @@ static void WriteOutputFile(appstate_t *as)
                      "LeftStickTime,LeftStickX,LeftStickY,"
                      "RightStickTime,RightStickX,RightStickY,"
                      "GyroPacketIndex,GyroTime,GyroPitch,GyroYaw,GyroRoll,"
-                     "AccelPacketIndex,AccelTime,AccelX,AccelY,AccelZ\n");
+                     "AccelPacketIndex,AccelTime,AccelX,AccelY,AccelZ,"
+                     "LeftTouchpadTime,LeftTouchpadTouch,"
+                     "LeftTouchpadX,LeftTouchpadY,LeftTouchpadPressure,"
+                     "RightTouchpadTime,RightTouchpadTouch,"
+                     "RightTouchpadX,RightTouchpadY,RightTouchpadPressure\n");
 
     // Print controller name once (leave remaining rows blank).
     num_bytes += SDL_snprintf(&as->buf[num_bytes], CSV_BUF_LEN - num_bytes,
@@ -1286,6 +1537,26 @@ static void WriteOutputFile(appstate_t *as)
             }
         }
 
+        // Print touchpads.
+        for (size_t j = 0; j < SDL_arraysize(touchpads); j++)
+        {
+            const touchpad_t *touch = touchpads[j];
+            if (i < touch->num_samples)
+            {
+                num_bytes +=
+                    SDL_snprintf(&as->buf[num_bytes], CSV_BUF_LEN - num_bytes,
+                                 ",%" SDL_PRIu64 ",%d,%f,%f,%f",
+                                 touch->timestamp[i] - touch->timestamp[0],
+                                 touch->down[i] ? 1 : 0, touch->x[i],
+                                 touch->y[i], touch->pressure[i]);
+            }
+            else
+            {
+                num_bytes += SDL_snprintf(&as->buf[num_bytes],
+                                          CSV_BUF_LEN - num_bytes, ",,,,,");
+            }
+        }
+
         // Print new line.
         num_bytes +=
             SDL_snprintf(&as->buf[num_bytes], CSV_BUF_LEN - num_bytes, "\n");
@@ -1312,6 +1583,12 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
     appstate_t *as = (appstate_t *)appstate;
 
+    if (as && as->gamepad.device)
+    {
+        SDL_CloseGamepad(as->gamepad.device);
+        WriteOutputFile(as);
+    }
+
 #ifdef _WIN32
     // Restore console mode.
     if (as && as->hconsole)
@@ -1319,12 +1596,6 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         SetConsoleMode(as->hconsole, as->original_mode);
     }
 #endif
-
-    if (as && as->gamepad.device)
-    {
-        SDL_CloseGamepad(as->gamepad.device);
-        WriteOutputFile(as);
-    }
 
     FreeAppState(as);
     SDL_QuitSubSystem(SDL_INIT_GAMEPAD);

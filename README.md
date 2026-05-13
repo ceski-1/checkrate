@@ -20,19 +20,19 @@ Optional command line arguments:
 | `-t <seconds>` or `--time <seconds>` | Number of seconds to measure input |
 | `-v` or `--verbose` | Show detailed statistics |
 
-Example 1 - Write raw data to a CSV file:
-
-```
-checkrate --output raw_data.csv
-```
-
-Example 2 - Measure input for 5 seconds and show detailed statistics:
+Example 1 - Measure input for 5 seconds and show detailed statistics:
 
 ```
 checkrate --verbose --time 5
 ```
 
 ![screenshot_verbose](res/screenshot_verbose.png)
+
+Example 2 - Write raw data to a CSV file:
+
+```
+checkrate --output raw_data.csv
+```
 
 ## CSV File Output
 
@@ -57,6 +57,16 @@ Comma-separated value (CSV) files can be generated using the `--output <file>` c
 | *AccelX* | Accelerometer x-axis (m/s<sup>2</sup>). |
 | *AccelY* | Accelerometer y-axis (m/s<sup>2</sup>). |
 | *AccelZ* | Accelerometer z-axis (m/s<sup>2</sup>). |
+| *LeftTouchpadTime* | Left touchpad timestamp (nanoseconds). |
+| *LeftTouchpadTouch* | Left touchpad touched (0 or 1). |
+| *LeftTouchpadX* | Left touchpad x position (0.0 to 1.0, origin is at upper left). |
+| *LeftTouchpadY* | Left touchpad y position (0.0 to 1.0, origin is at upper left). |
+| *LeftTouchpadPressure* | Left touchpad touch pressure (0.0 to 1.0). |
+| *RightTouchpadTime* | Right touchpad timestamp (nanoseconds). |
+| *RightTouchpadTouch* | Right touchpad touched (0 or 1). |
+| *RightTouchpadX* | Right touchpad x position (0.0 to 1.0, origin is at upper left). |
+| *RightTouchpadY* | Right touchpad y position (0.0 to 1.0, origin is at upper left). |
+| *RightTouchpadPressure* | Right touchpad touch pressure (0.0 to 1.0). |
 
 ## Compiling
 
