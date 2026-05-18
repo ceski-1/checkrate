@@ -1,2 +1,2 @@
-- Added Linux AppImage to releases
-- Reduced number of writes for CSV files
+- Added touchpad/trackpad support
+- Added support for Steam Controller
