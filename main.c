@@ -114,6 +114,7 @@ typedef struct
     SDL_JoystickID id;      // Instance ID for connected controller.
     const char *name;       // Controller name returned by SDL.
     bool switch_controller; // Is this a Switch controller?
+    bool steam_controller;  // Is this a Steam controller?
 } gamepad_t;
 
 typedef enum
@@ -567,6 +568,10 @@ static void OpenGamepad(appstate_t *as, SDL_JoystickID id)
         SDL_GamepadHasSensor(as->gamepad.device, SDL_SENSOR_ACCEL)
         && SDL_SetGamepadSensorEnabled(as->gamepad.device, SDL_SENSOR_ACCEL,
                                        true);
+
+    as->gamepad.steam_controller =
+        !as->gamepad.switch_controller
+        && SDL_GetGamepadType(as->gamepad.device) == SDL_GAMEPAD_TYPE_STEAM;
 
     ConfigureTouchpads(as);
 }
@@ -1134,16 +1139,29 @@ static void ShowResults(appstate_t *as)
         as->left_touch.enabled,
         as->right_touch.enabled,
     };
+    const char *left_touch_name;
+    const char *right_touch_name;
+    if (as->left_touch.enabled && as->right_touch.enabled)
+    {
+        left_touch_name =
+            as->gamepad.steam_controller ? "L. Trackpad" : "L. Touchpad";
+        right_touch_name =
+            as->gamepad.steam_controller ? "R. Trackpad" : "R. Touchpad";
+    }
+    else
+    {
+        left_touch_name =
+            as->gamepad.steam_controller ? "Trackpad" : "Touchpad";
+        right_touch_name = left_touch_name;
+    }
     const char *names[] = {
         as->verbose ? "Polling" : "Polling Rate",
         as->left.enabled && as->right.enabled ? "Left Stick" : "Stick",
         as->left.enabled && as->right.enabled ? "Right Stick" : "Stick",
         "IMU Gyro",
         "IMU Accel",
-        as->left_touch.enabled && as->right_touch.enabled ? "L. Touchpad"
-                                                          : "Touchpad",
-        as->left_touch.enabled && as->right_touch.enabled ? "R. Touchpad"
-                                                          : "Touchpad",
+        left_touch_name,
+        right_touch_name,
     };
     const stats_t *all_stats[] = {
         &as->poll,
@@ -1293,11 +1311,13 @@ static bool ShowInputPrompt(appstate_t *as)
         ((as->left.enabled ? 1 : 0) + (as->right.enabled ? 1 : 0));
     const int touchpads =
         ((as->left_touch.enabled ? 1 : 0) + (as->right_touch.enabled ? 1 : 0));
+    const char *touch_name =
+        as->gamepad.steam_controller ? "trackpad" : "touchpad";
 
     if (sticks == 0 && touchpads == 0)
     {
-        SDL_Log("%sError: No analog sticks or touchpads found.%s", as->red,
-                as->end);
+        SDL_Log("%sError: No analog sticks or %ss found.%s", as->red,
+                touch_name, as->end);
         CloseGamepad(as, as->gamepad.id);
         return false;
     }
@@ -1308,14 +1328,14 @@ static bool ShowInputPrompt(appstate_t *as)
     }
     else if (sticks == 0 && touchpads > 0)
     {
-        SDL_Log("Swipe touchpad%s in circular motions for %d seconds.",
+        SDL_Log("Swipe %s%s in circular motions for %d seconds.", touch_name,
                 touchpads > 1 ? "s" : "", (int)as->measure_time);
     }
     else
     {
-        SDL_Log("Rotate stick%s or swipe touchpad%s in circular motions for "
+        SDL_Log("Rotate stick%s or swipe %s%s in circular motions for "
                 "%d seconds.",
-                sticks > 1 ? "s" : "", touchpads > 1 ? "s" : "",
+                sticks > 1 ? "s" : "", touch_name, touchpads > 1 ? "s" : "",
                 (int)as->measure_time);
     }
 
