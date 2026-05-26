@@ -1,8 +1,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO libsdl-org/SDL
-    REF 29f7f08261e086a6879d7d3cb4ca51195fbfe9f8
-    SHA512 83cf0438909b239dea0c86d2172e48583e3075977f8cdbbcec44af796f4ca866875404863222da772bb2e257bec49243320a2b8587bcbe032f9257d221c74339
+    REF d4236dcd852d001df4cf6175067649572a3b461d
+    SHA512 2f9beb03f81be6b6b89f9abde02e965684b584e1f6868e12369fffb5df3fcc32ac00a595384da6e8def4929d13dc8e52a45fec8240a47709998c82d1b39d524c
     HEAD_REF main
     PATCHES
         fix-freebsd.patch
@@ -21,6 +21,7 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
         vulkan   SDL_VULKAN
         wayland  SDL_WAYLAND
         x11      SDL_X11
+        libusb   SDL_HIDAPI_LIBUSB
 )
 
 if (VCPKG_TARGET_IS_EMSCRIPTEN)
@@ -40,16 +41,23 @@ endif()
 if ("ibus" IN_LIST FEATURES)
     message(WARNING "You will need to install ibus dependencies to use feature ibus:\nsudo apt install libibus-1.0-dev\n")
 endif()
+
+if ("libusb" IN_LIST FEATURES)
+    if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")
+        vcpkg_list(APPEND FEATURE_OPTIONS "-DSDL_HIDAPI_LIBUSB_SHARED=ON")
+    else()
+        if (WIN32)
+            vcpkg_list(APPEND FEATURE_OPTIONS "-DSDL_HIDAPI_LIBUSB_SHARED=OFF")
+        else()
+            vcpkg_list(APPEND FEATURE_OPTIONS "-DCMAKE_DISABLE_FIND_PACKAGE_LibUSB=1")
+        endif()
+    endif()
+endif()
+
 # option for not need to show windows
 list(APPEND FEATURE_OPTIONS -DSDL_UNIX_CONSOLE_BUILD=ON)
 if (VCPKG_TARGET_IS_LINUX AND NOT "x11" IN_LIST FEATURES AND NOT "wayland" IN_LIST FEATURES)
     message(WARNING "The selected features don't allow sdl3 to create windows, which is usually unintentional. You can get windowing support by installing the x11 and/or wayland features.")
-endif()
-
-if(WIN32)
-    set(LIBUSB_OPTION "-DSDL_HIDAPI_LIBUSB_SHARED=OFF")
-else()
-    set(LIBUSB_OPTION "-DCMAKE_DISABLE_FIND_PACKAGE_LibUSB=1")
 endif()
 
 vcpkg_cmake_configure(
@@ -66,7 +74,6 @@ vcpkg_cmake_configure(
         -DSDL_INSTALL_CMAKEDIR_ROOT=share/${PORT}
         # Specifying the revision skips the need to use git to determine a version
         -DSDL_REVISION=vcpkg
-        ${LIBUSB_OPTION}
         -DSDL_AUDIO=OFF
         -DSDL_CAMERA=OFF
         -DSDL_DIALOG=OFF
