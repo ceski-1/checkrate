@@ -768,12 +768,14 @@ static double CalcPercentile(const double *data, size_t count,
 
     if (remainder == 0)
     {
-        const size_t index = SDL_lround(np) - 1;
+        size_t index = SDL_lround(np) - 1;
+        index = SDL_clamp(index, 0, count - 2);
         return ((data[index] + data[index + 1]) * 0.5);
     }
     else
     {
-        const size_t index = SDL_lround(SDL_ceil(np)) - 1;
+        size_t index = SDL_lround(SDL_ceil(np)) - 1;
+        index = SDL_clamp(index, 0, count - 1);
         return data[index];
     }
 }
