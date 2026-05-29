@@ -1,2 +1,2 @@
-- Added touchpad/trackpad support
-- Added support for Steam Controller
+- Updated SDL3 to latest prerelease version (Steam Controller improvements)
+- Prioritize analog stick data when calculating polling rate for Switch controllers
