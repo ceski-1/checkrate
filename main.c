@@ -1051,7 +1051,25 @@ static void CalcPollingRate(double *delta_time, const uint64_t *timestamp,
 
 static void CalcResults(appstate_t *as)
 {
-    if (as->gyro.enabled && as->gyro.num_samples > 1)
+    if (as->gamepad.switch_controller)
+    {
+        if (as->left.enabled && as->left.num_samples > 1)
+        {
+            CalcPollingRate(as->delta_time, as->left.timestamp,
+                            as->left.num_samples, &as->poll);
+        }
+        else if (as->right.enabled && as->right.num_samples > 1)
+        {
+            CalcPollingRate(as->delta_time, as->right.timestamp,
+                            as->right.num_samples, &as->poll);
+        }
+        else if (as->gyro.enabled && as->gyro.num_samples > 1)
+        {
+            CalcPollingRate(as->delta_time, as->gyro.timestamp,
+                            as->gyro.num_samples, &as->poll);
+        }
+    }
+    else if (as->gyro.enabled && as->gyro.num_samples > 1)
     {
         CalcPollingRate(as->delta_time, as->gyro.timestamp,
                         as->gyro.num_samples, &as->poll);
