@@ -569,11 +569,11 @@ static void OpenGamepad(appstate_t *as, SDL_JoystickID id)
         && SDL_SetGamepadSensorEnabled(as->gamepad.device, SDL_SENSOR_ACCEL,
                                        true);
 
-#ifdef SDL_GAMEPAD_TYPE_STEAM
+//#ifdef SDL_GAMEPAD_TYPE_STEAM
     as->gamepad.steam_controller =
         !as->gamepad.switch_controller
         && SDL_GetGamepadType(as->gamepad.device) == SDL_GAMEPAD_TYPE_STEAM;
-#endif
+//#endif
 
     ConfigureTouchpads(as);
 }
