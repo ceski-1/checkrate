@@ -1,13 +1,22 @@
 diff --git a/src/joystick/hidapi/SDL_hidapi_steam_triton.c b/src/joystick/hidapi/SDL_hidapi_steam_triton.c
-index 97152d359..9ce040f93 100644
+index 36184b018..46c6a8f05 100644
 --- a/src/joystick/hidapi/SDL_hidapi_steam_triton.c
 +++ b/src/joystick/hidapi/SDL_hidapi_steam_triton.c
-@@ -225,7 +225,7 @@ static void HIDAPI_DriverSteamTriton_HandleState(SDL_HIDAPI_Device *device,
-     SDL_SendJoystickAxis(timestamp, joystick, SDL_GAMEPAD_AXIS_RIGHTY,
-                          -pTritonReport->sRightStickY);
+@@ -271,7 +271,7 @@ static void HIDAPI_DriverSteamTriton_HandleState(SDL_HIDAPI_Device *device,
+         ctx->right_touch_down = right_touch_down;
+     }
  
--    if (ctx->report_sensors && pTritonReport->imu.timestamp != ctx->last_sensor_tick) {
+-    if (ctx->report_sensors && pTritonReport->imu.timestamp != ctx->last_sensor_tick32) {
 +    if (ctx->report_sensors) {
-         Uint32 delta_us = (pTritonReport->imu.timestamp - ctx->last_sensor_tick);
+         Uint32 delta_us = (pTritonReport->imu.timestamp - ctx->last_sensor_tick32);
  
          ctx->sensor_timestamp_ns += SDL_US_TO_NS(delta_us);
+@@ -328,7 +328,7 @@ static void HIDAPI_DriverSteamTriton_HandleState_Timestamp(SDL_HIDAPI_Device *de
+         ctx->right_touch_down = right_touch_down;
+     }
+ 
+-    if (ctx->report_sensors && pTritonReport->imu.timestamp != ctx->last_sensor_tick16) {
++    if (ctx->report_sensors) {
+         // The timestamp is in units of 32 microseconds
+         Uint32 delta_us = (Uint32)(pTritonReport->imu.timestamp - ctx->last_sensor_tick16) * 32;
+ 
