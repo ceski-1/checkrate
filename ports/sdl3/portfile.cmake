@@ -1,8 +1,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO libsdl-org/SDL
-    REF 634dff3725b8419902b832d1c84363da211a3596
-    SHA512 c67884f588299797764894a964b70533f85403aed8167b3380367af0a6d6c47bbfa521f29b26e20669c969ac200a4b047c2fd624f4067b32afcb815d5ea93b02
+    REF 81afb82f2df8b20eb376d0c8f371ea1efecd1a88
+    SHA512 6fccfeaf7f1d03ab4c445b9d4771225c338546b1f67286f5631b7be36aa96ab03ae89718ed27af27e5453eac263b025ab6ecddb88b1d44feb5d5fb0ee5c282e8
     HEAD_REF main
     PATCHES
         fix-freebsd.patch
@@ -68,9 +68,30 @@ vcpkg_cmake_configure(
         -DSDL_SHARED=${SDL_SHARED}
         -DSDL_FORCE_STATIC_VCRT=${FORCE_STATIC_VCRT}
         -DSDL_LIBC=ON
+        # Prevent host-installed Unix libraries from silently changing SDL's capabilities.
+        -DSDL_FRIBIDI=OFF
+        -DSDL_JACK=OFF
+        -DSDL_KMSDRM=OFF
+        -DSDL_LIBTHAI=OFF
+        -DSDL_LIBUDEV=OFF
+        -DSDL_LIBURING=OFF
+        -DSDL_PIPEWIRE=OFF
+        -DSDL_PULSEAUDIO=OFF
+        -DSDL_ROCKCHIP=OFF
+        -DSDL_RPI=OFF
+        -DSDL_SNDIO=OFF
+        -DSDL_WAYLAND_LIBDECOR=OFF
         -DSDL_TEST_LIBRARY=OFF
         -DSDL_TESTS=OFF
+        -DSDL_X11_XCURSOR=OFF
+        -DSDL_X11_XDBE=OFF
+        -DSDL_X11_XFIXES=OFF
+        -DSDL_X11_XINPUT=OFF
+        -DSDL_X11_XRANDR=OFF
+        -DSDL_X11_XSHAPE=OFF
         -DSDL_X11_XSCRNSAVER=OFF
+        -DSDL_X11_XSYNC=OFF
+        -DSDL_X11_XTEST=OFF
         -DSDL_INSTALL_CMAKEDIR_ROOT=share/${PORT}
         # Specifying the revision skips the need to use git to determine a version
         -DSDL_REVISION=vcpkg
@@ -102,6 +123,13 @@ vcpkg_copy_pdbs()
 vcpkg_fixup_pkgconfig()
 
 file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/usage" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}")
-vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE.txt"
-    COMMENT "Some configurations may use code licensed under the MIT and Apache-2.0 licenses."
+vcpkg_install_copyright(
+    FILE_LIST
+        "${SOURCE_PATH}/LICENSE.txt"
+        "${SOURCE_PATH}/src/hidapi/LICENSE-bsd.txt"
+        "${SOURCE_PATH}/src/video/stb_image.h"
+        "${SOURCE_PATH}/src/video/yuv2rgb/LICENSE"
+        "${SOURCE_PATH}/include/SDL3/SDL_opengles2_gl2.h"
+        "${SOURCE_PATH}/include/SDL3/SDL_opengles2_gl2platform.h"
+    COMMENT "SDL_opengles2_gl2platform.h is licensed under Apache-2.0; see https://www.apache.org/licenses/LICENSE-2.0."
 )
