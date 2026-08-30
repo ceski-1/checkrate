@@ -1,8 +1,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO libsdl-org/SDL
-    REF 81afb82f2df8b20eb376d0c8f371ea1efecd1a88
-    SHA512 6fccfeaf7f1d03ab4c445b9d4771225c338546b1f67286f5631b7be36aa96ab03ae89718ed27af27e5453eac263b025ab6ecddb88b1d44feb5d5fb0ee5c282e8
+    REF 46498bc247819a2da7c1ccc7d4c4f6231076666c
+    SHA512 bd640ef457682ea72f04d3588b0858bed6cabe350eddb8db737f4d69745d2d6b3e71ded169f5a0f140f8e2b1b162134ee4f6c186a906114daf40d2b17ce8552b
     HEAD_REF main
     PATCHES
         fix-freebsd.patch
@@ -46,7 +46,7 @@ if ("libusb" IN_LIST FEATURES)
     if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")
         vcpkg_list(APPEND FEATURE_OPTIONS "-DSDL_HIDAPI_LIBUSB_SHARED=ON")
     else()
-        if (WIN32)
+        if (VCPKG_TARGET_IS_WINDOWS)
             vcpkg_list(APPEND FEATURE_OPTIONS "-DSDL_HIDAPI_LIBUSB_SHARED=OFF")
         else()
             vcpkg_list(APPEND FEATURE_OPTIONS "-DCMAKE_DISABLE_FIND_PACKAGE_LibUSB=1")
@@ -73,8 +73,6 @@ vcpkg_cmake_configure(
         -DSDL_JACK=OFF
         -DSDL_KMSDRM=OFF
         -DSDL_LIBTHAI=OFF
-        -DSDL_LIBUDEV=OFF
-        -DSDL_LIBURING=OFF
         -DSDL_PIPEWIRE=OFF
         -DSDL_PULSEAUDIO=OFF
         -DSDL_ROCKCHIP=OFF
