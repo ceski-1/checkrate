@@ -1,8 +1,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO libsdl-org/SDL
-    REF 46498bc247819a2da7c1ccc7d4c4f6231076666c
-    SHA512 bd640ef457682ea72f04d3588b0858bed6cabe350eddb8db737f4d69745d2d6b3e71ded169f5a0f140f8e2b1b162134ee4f6c186a906114daf40d2b17ce8552b
+    REF 9bb6a8610a974d1952c11be45a7fce1b2f3592b9
+    SHA512 8fb8cdaa9e7043455b20c413f538296ffaf3e2741a986b5fadda6ca564dc5f8cb1eeca6c5cdf6dc6f966d75abddec8749b2e4181c3e7358ed2cfe8f00311de88
     HEAD_REF main
     PATCHES
         fix-freebsd.patch
@@ -30,6 +30,13 @@ if (VCPKG_TARGET_IS_EMSCRIPTEN)
             emscripten-pthreads     SDL_PTHREADS
     )
     vcpkg_list(APPEND FEATURE_OPTIONS "${EMSCRIPTEN_FEATURE_OPTIONS}")
+endif()
+
+if ("macos-keyboard-grab" IN_LIST FEATURES)
+    # SDL only disables the system shortcuts in SDL_SetWindowKeyboardGrab() on
+    # macOS if SDL_MAC_NO_SANDBOX is defined
+    string(APPEND VCPKG_C_FLAGS " -DSDL_MAC_NO_SANDBOX")
+    string(APPEND VCPKG_CXX_FLAGS " -DSDL_MAC_NO_SANDBOX")
 endif()
 
 if ("x11" IN_LIST FEATURES)
