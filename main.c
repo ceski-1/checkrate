@@ -425,6 +425,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 
     ResetAppState(as);
 
+    SDL_SetHint(SDL_HINT_JOYSTICK_GAMEINPUT, "0");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_Init(SDL_INIT_GAMEPAD))
     {
