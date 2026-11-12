@@ -11,7 +11,7 @@ if(WIN32)
     configure_file(res/version.rc.in version.rc)
     target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/version.rc")
 endif()
-find_package(SDL3 3.4.4 REQUIRED)
+find_package(SDL3 3.4.20 REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3)
 
 include(CheckIPOSupported)

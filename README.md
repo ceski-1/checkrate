@@ -73,8 +73,8 @@ Comma-separated value (CSV) files can be generated using the `--output <file>` c
 Requirements:
 
 - [CMake](https://cmake.org) (3.16 or later)
-- [libusb](https://github.com/libusb/libusb) (1.0.29 or later)
-- [SDL3](https://github.com/libsdl-org/SDL) (3.4.4 or later)
+- [libusb](https://github.com/libusb/libusb) (1.0.30 or later)
+- [SDL3](https://github.com/libsdl-org/SDL) (3.4.20 or later)
 
 For Windows, [vcpkg](https://github.com/microsoft/vcpkg) is recommended. For Linux, use the libraries provided by your distribution.
 
